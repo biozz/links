@@ -182,16 +182,17 @@ func main() {
 
 		se.Router.GET("/api/expand", func(e *core.RequestEvent) error {
 			q := e.Request.URL.Query().Get("q")
+			deviceId := e.Get(DEVICE_ID_CONTEXT_KEY).(string)
 			itemsResult := getItems(app, q)
 			switch itemsResult.State {
 			case NEW_ITEM:
 				return e.Redirect(http.StatusTemporaryRedirect, fmt.Sprintf("/new?alias=%s", itemsResult.FirstQ))
 			case GOOGLE_MODE:
 				// This is a special shortcut
-				createLog(app, itemsResult.Expansion.Alias, itemsResult.Expansion.Args, e.Get(DEVICE_ID_CONTEXT_KEY).(string))
+				createLog(app, itemsResult.Expansion.Alias, itemsResult.Expansion.Args, deviceId)
 				return e.Redirect(http.StatusTemporaryRedirect, itemsResult.Expansion.URL)
 			default:
-				createLog(app, itemsResult.Expansion.Alias, itemsResult.Expansion.Args, e.Get(DEVICE_ID_CONTEXT_KEY).(string))
+				createLog(app, itemsResult.Expansion.Alias, itemsResult.Expansion.Args, deviceId)
 				return e.Redirect(http.StatusTemporaryRedirect, itemsResult.Expansion.URL)
 			}
 		}).BindFunc(authMiddleware.API)
@@ -507,7 +508,7 @@ func (m *AuthMiddleware) Frontend(e *core.RequestEvent) error {
 }
 
 func (m *AuthMiddleware) API(e *core.RequestEvent) error {
-	token := e.Request.URL.Query().Get("token")
+	token := e.Request.URL.Query().Get("t")
 	if token == "" {
 		return e.String(http.StatusOK, "no token")
 	}
