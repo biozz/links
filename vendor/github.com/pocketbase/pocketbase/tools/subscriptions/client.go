@@ -13,20 +13,11 @@ import (
 
 const optionsParam = "options"
 
-// Message defines a client's channel data.
-type Message struct {
-	Name string `json:"name"`
-	Data []byte `json:"data"`
-}
-
 // SubscriptionOptions defines the request options (query params, headers, etc.)
 // for a single subscription topic.
 type SubscriptionOptions struct {
-	// @todo after the requests handling refactoring consider
-	// changing to map[string]string or map[string][]string
-
-	Query   map[string]any `json:"query"`
-	Headers map[string]any `json:"headers"`
+	Query   map[string]string `json:"query"`
+	Headers map[string]string `json:"headers"`
 }
 
 // Client is an interface for a generic subscription client.
@@ -35,6 +26,8 @@ type Client interface {
 	Id() string
 
 	// Channel returns the client's communication channel.
+	//
+	// NB! The channel shouldn't be used after calling Discard().
 	Channel() chan Message
 
 	// Subscriptions returns a shallow copy of the client subscriptions matching the prefixes.
@@ -68,8 +61,8 @@ type Client interface {
 	// Get retrieves the key value from the client's context.
 	Get(key string) any
 
-	// Discard marks the client as "discarded", meaning that it
-	// shouldn't be used anymore for sending new messages.
+	// Discard marks the client as "discarded" (and closes its channel),
+	// meaning that it shouldn't be used anymore for sending new messages.
 	//
 	// It is safe to call Discard() multiple times.
 	Discard()
@@ -168,25 +161,33 @@ func (c *DefaultClient) Subscribe(subs ...string) {
 		}
 
 		// extract subscription options (if any)
-		options := SubscriptionOptions{}
+		rawOptions := struct {
+			// note: any instead of string to minimize the breaking changes with earlier versions
+			Query   map[string]any `json:"query"`
+			Headers map[string]any `json:"headers"`
+		}{}
 		u, err := url.Parse(s)
 		if err == nil {
-			rawOptions := u.Query().Get(optionsParam)
-			if rawOptions != "" {
-				json.Unmarshal([]byte(rawOptions), &options)
+			raw := u.Query().Get(optionsParam)
+			if raw != "" {
+				json.Unmarshal([]byte(raw), &rawOptions)
 			}
+		}
+
+		options := SubscriptionOptions{
+			Query:   make(map[string]string, len(rawOptions.Query)),
+			Headers: make(map[string]string, len(rawOptions.Headers)),
 		}
 
 		// normalize query
 		// (currently only single string values are supported for consistency with the default routes handling)
-		for k, v := range options.Query {
+		for k, v := range rawOptions.Query {
 			options.Query[k] = cast.ToString(v)
 		}
 
 		// normalize headers name and values, eg. "X-Token" is converted to "x_token"
 		// (currently only single string values are supported for consistency with the default routes handling)
-		for k, v := range options.Headers {
-			delete(options.Headers, k)
+		for k, v := range rawOptions.Headers {
 			options.Headers[inflector.Snakecase(k)] = cast.ToString(v)
 		}
 
@@ -251,6 +252,12 @@ func (c *DefaultClient) Unset(key string) {
 func (c *DefaultClient) Discard() {
 	c.mux.Lock()
 	defer c.mux.Unlock()
+
+	if c.isDiscarded {
+		return
+	}
+
+	close(c.channel)
 
 	c.isDiscarded = true
 }

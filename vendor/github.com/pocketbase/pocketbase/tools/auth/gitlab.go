@@ -9,6 +9,10 @@ import (
 	"golang.org/x/oauth2"
 )
 
+func init() {
+	Providers[NameGitlab] = wrapFactory(NewGitlabProvider)
+}
+
 var _ Provider = (*Gitlab)(nil)
 
 // NameGitlab is the unique name of the Gitlab provider.
@@ -16,19 +20,19 @@ const NameGitlab string = "gitlab"
 
 // Gitlab allows authentication via Gitlab OAuth2.
 type Gitlab struct {
-	*baseProvider
+	BaseProvider
 }
 
 // NewGitlabProvider creates new Gitlab provider instance with some defaults.
 func NewGitlabProvider() *Gitlab {
-	return &Gitlab{&baseProvider{
+	return &Gitlab{BaseProvider{
 		ctx:         context.Background(),
 		displayName: "GitLab",
 		pkce:        true,
 		scopes:      []string{"read_user"},
-		authUrl:     "https://gitlab.com/oauth/authorize",
-		tokenUrl:    "https://gitlab.com/oauth/token",
-		userApiUrl:  "https://gitlab.com/api/v4/user",
+		authURL:     "https://gitlab.com/oauth/authorize",
+		tokenURL:    "https://gitlab.com/oauth/token",
+		userInfoURL: "https://gitlab.com/api/v4/user",
 	}}
 }
 
@@ -36,7 +40,7 @@ func NewGitlabProvider() *Gitlab {
 //
 // API reference: https://docs.gitlab.com/ee/api/users.html#for-admin
 func (p *Gitlab) FetchAuthUser(token *oauth2.Token) (*AuthUser, error) {
-	data, err := p.FetchRawUserData(token)
+	data, err := p.FetchRawUserInfo(token)
 	if err != nil {
 		return nil, err
 	}
@@ -47,22 +51,22 @@ func (p *Gitlab) FetchAuthUser(token *oauth2.Token) (*AuthUser, error) {
 	}
 
 	extracted := struct {
-		Id        int    `json:"id"`
 		Name      string `json:"name"`
 		Username  string `json:"username"`
 		Email     string `json:"email"`
-		AvatarUrl string `json:"avatar_url"`
+		AvatarURL string `json:"avatar_url"`
+		Id        int64  `json:"id"`
 	}{}
 	if err := json.Unmarshal(data, &extracted); err != nil {
 		return nil, err
 	}
 
 	user := &AuthUser{
-		Id:           strconv.Itoa(extracted.Id),
+		Id:           strconv.FormatInt(extracted.Id, 10),
 		Name:         extracted.Name,
 		Username:     extracted.Username,
 		Email:        extracted.Email,
-		AvatarUrl:    extracted.AvatarUrl,
+		AvatarURL:    extracted.AvatarURL,
 		RawUser:      rawUser,
 		AccessToken:  token.AccessToken,
 		RefreshToken: token.RefreshToken,

@@ -8,7 +8,7 @@ import (
 	"io/fs"
 	"os"
 
-	"github.com/labstack/echo/v5"
+	"github.com/pocketbase/pocketbase/core"
 )
 
 //go:embed static/*
@@ -37,10 +37,12 @@ func (t *Templates) Must() {
 	t.templates = map[string]*template.Template{
 		"index":      template.Must(template.New("").ParseFS(t.fsys, "index.html.tmpl", "layout.html.tmpl")),
 		"items":      template.Must(template.New("").ParseFS(t.fsys, "items.html.tmpl")),
-		"logs":       template.Must(template.New("").ParseFS(t.fsys, "logs.html.tmpl")),
-		"stats":      template.Must(template.New("").ParseFS(t.fsys, "stats.html.tmpl")),
 		"new":        template.Must(template.New("").ParseFS(t.fsys, "new.html.tmpl", "layout.html.tmpl")),
+		"stats":      template.Must(template.New("").ParseFS(t.fsys, "stats.html.tmpl", "layout.html.tmpl")),
+		"logs":       template.Must(template.New("").ParseFS(t.fsys, "logs.html.tmpl")),
+		"help":       template.Must(template.New("").ParseFS(t.fsys, "help.html.tmpl", "layout.html.tmpl")),
 		"login":      template.Must(template.New("").ParseFS(t.fsys, "login.html.tmpl", "layout.html.tmpl")),
+		"nav":        template.Must(template.New("").ParseFS(t.fsys, "nav.html.tmpl")),
 		"opensearch": template.Must(template.New("").ParseFS(t.fsys, "opensearch.xml.tmpl")),
 	}
 }
@@ -51,7 +53,7 @@ func (t *Templates) RenderEcho(
 	w io.Writer,
 	name string,
 	data interface{},
-	c echo.Context,
+	e *core.RequestEvent,
 ) error {
 	if t.dev {
 		t.Must()

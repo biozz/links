@@ -1,5 +1,5 @@
 {{ define "logs" }}
-<table class="logs-table">
+<table>
   <thead>
     <tr>
       <th>Timestamp</th>
@@ -14,7 +14,7 @@
     >
         <td>{{ .CreatedAt }}</td>
         <td>{{ .Alias }}</td>
-        <td>redacted</td>
+        <td>{{ .Args }}</td>
     </tr>
     {{ end }}
 </tbody>

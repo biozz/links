@@ -1,0 +1,18 @@
+{{ define "nav" }}
+<nav>
+  <ul>
+    <li><strong><a href="/">Links</a></strong></li>
+  </ul>
+  <ul>
+    {{ if .IsLoggedIn }}
+      <li><a href="/new">New</a></li>
+      <li><a href="/stats">Stats</a></li>
+      <li><a href="/help">Help</a></li>
+      <li><a href="/logout">Logout</a></li>
+    {{ else }}
+      <li><a href="/login">Login</a></li>
+    <li><a href="/help">Help</a></li>
+    {{ end }}
+  </ul>
+</nav>
+{{ end }}

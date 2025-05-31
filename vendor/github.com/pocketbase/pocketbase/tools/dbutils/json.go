@@ -5,31 +5,35 @@ import (
 	"strings"
 )
 
-// JsonEach returns JSON_EACH SQLite string expression with
+// JSONEach returns JSON_EACH SQLite string expression with
 // some normalizations for non-json columns.
-func JsonEach(column string) string {
+func JSONEach(column string) string {
+	// note: we are not using the new and shorter "if(x,y)" syntax for
+	// compatability with custom drivers that use older SQLite version
 	return fmt.Sprintf(
-		`json_each(CASE WHEN json_valid([[%s]]) THEN [[%s]] ELSE json_array([[%s]]) END)`,
-		column, column, column,
+		`json_each(CASE WHEN iif(json_valid([[%s]]), json_type([[%s]])='array', FALSE) THEN [[%s]] ELSE json_array([[%s]]) END)`,
+		column, column, column, column,
 	)
 }
 
-// JsonArrayLength returns JSON_ARRAY_LENGTH SQLite string expression
+// JSONArrayLength returns JSON_ARRAY_LENGTH SQLite string expression
 // with some normalizations for non-json columns.
 //
 // It works with both json and non-json column values.
 //
 // Returns 0 for empty string or NULL column values.
-func JsonArrayLength(column string) string {
+func JSONArrayLength(column string) string {
+	// note: we are not using the new and shorter "if(x,y)" syntax for
+	// compatability with custom drivers that use older SQLite version
 	return fmt.Sprintf(
-		`json_array_length(CASE WHEN json_valid([[%s]]) THEN [[%s]] ELSE (CASE WHEN [[%s]] = '' OR [[%s]] IS NULL THEN json_array() ELSE json_array([[%s]]) END) END)`,
-		column, column, column, column, column,
+		`json_array_length(CASE WHEN iif(json_valid([[%s]]), json_type([[%s]])='array', FALSE) THEN [[%s]] ELSE (CASE WHEN [[%s]] = '' OR [[%s]] IS NULL THEN json_array() ELSE json_array([[%s]]) END) END)`,
+		column, column, column, column, column, column,
 	)
 }
 
-// JsonExtract returns a JSON_EXTRACT SQLite string expression with
+// JSONExtract returns a JSON_EXTRACT SQLite string expression with
 // some normalizations for non-json columns.
-func JsonExtract(column string, path string) string {
+func JSONExtract(column string, path string) string {
 	// prefix the path with dot if it is not starting with array notation
 	if path != "" && !strings.HasPrefix(path, "[") {
 		path = "." + path

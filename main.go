@@ -12,146 +12,195 @@ import (
 	"time"
 
 	"github.com/biozz/links/web"
-	"github.com/labstack/echo/v5"
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/apis"
 	"github.com/pocketbase/pocketbase/core"
-	"github.com/pocketbase/pocketbase/models"
-	"github.com/pocketbase/pocketbase/plugins/migratecmd"
-	"github.com/pocketbase/pocketbase/tools/types"
 
 	_ "github.com/biozz/links/migrations"
+	"github.com/pocketbase/pocketbase/plugins/migratecmd"
+	"github.com/pocketbase/pocketbase/tools/types"
 )
 
 func main() {
-	pb := pocketbase.New()
+	app := pocketbase.New()
 	dev := strings.Contains(strings.Join(os.Args, " "), "--dev")
 	tmpls := web.NewTemplates(dev)
-	authMiddleware := &AuthMiddleware{pb}
+	authMiddleware := &AuthMiddleware{app}
 
-	pb.OnBeforeServe().Add(func(e *core.ServeEvent) error {
+	app.OnServe().BindFunc(func(se *core.ServeEvent) error {
 		fsys, _ := fs.Sub(web.StaticFS, "static")
 
-		e.Router.GET("/static/*", apis.StaticDirectoryHandler(fsys, false))
+		se.Router.GET("/static/{path...}", apis.Static(fsys, false))
 
-		e.Router.GET("/", func(c echo.Context) error {
-			return tmpls.RenderEcho(c.Response().Writer, "index", nil, c)
-		}, authMiddleware.Process)
+		se.Router.GET("/", func(e *core.RequestEvent) error {
+			return tmpls.RenderEcho(e.Response, "index", nil, e)
+		}).BindFunc(authMiddleware.Frontend)
 
-		e.Router.GET("/new", func(c echo.Context) error {
-			return tmpls.RenderEcho(c.Response().Writer, "new", c.Request().URL.Query().Get("alias"), c)
-		}, authMiddleware.Process)
+		se.Router.GET("/new", func(e *core.RequestEvent) error {
+			alias := e.Request.URL.Query().Get("alias")
+			return tmpls.RenderEcho(e.Response, "new", alias, e)
+		}).BindFunc(authMiddleware.Frontend)
 
-		e.Router.POST("/items", func(c echo.Context) error {
+		se.Router.POST("/items", func(e *core.RequestEvent) error {
 			var newItem Item
-			if err := c.Bind(&newItem); err != nil {
-				return c.String(http.StatusBadRequest, err.Error())
+			if err := e.BindBody(&newItem); err != nil {
+				return e.String(http.StatusBadRequest, err.Error())
 			}
-			err := createItem(pb, newItem)
+			err := createItem(app, newItem)
 			if err != nil {
-				return c.String(http.StatusBadRequest, err.Error())
+				return e.String(http.StatusBadRequest, err.Error())
 			}
-			c.Response().Header().Set("HX-Redirect", "/")
-			return c.String(http.StatusOK, "ok")
-		}, authMiddleware.Process)
+			e.Response.Header().Set("HX-Redirect", "/")
+			return e.String(http.StatusOK, "ok")
+		}).BindFunc(authMiddleware.Frontend)
 
-		e.Router.GET("/items", func(c echo.Context) error {
-			q := c.Request().URL.Query().Get("q")
+		se.Router.GET("/items", func(e *core.RequestEvent) error {
+			q := e.Request.URL.Query().Get("q")
 			var ctx ItemsContext
-			itemsResult := getItems(pb, q)
+			itemsResult := getItems(app, q)
 			ctx.Items = itemsResult.Items
 			switch itemsResult.State {
 			case NEW_ITEM:
 				ctx.New = itemsResult.FirstQ
-				return tmpls.RenderEcho(c.Response().Writer, "items", ctx, c)
+				return tmpls.RenderEcho(e.Response, "items", ctx, e)
 			case ARGS_MODE:
 				ctx.Expansion = itemsResult.Expansion
-				return tmpls.RenderEcho(c.Response().Writer, "items", ctx, c)
+				return tmpls.RenderEcho(e.Response, "items", ctx, e)
 			case GOOGLE_MODE:
 				ctx.Expansion = itemsResult.Expansion
 				ctx.IsGoogle = true
-				return tmpls.RenderEcho(c.Response().Writer, "items", ctx, c)
+				return tmpls.RenderEcho(e.Response, "items", ctx, e)
 			default:
-				return tmpls.RenderEcho(c.Response().Writer, "items", ctx, c)
+				return tmpls.RenderEcho(e.Response, "items", ctx, e)
 			}
-		}, authMiddleware.Process)
+		}).BindFunc(authMiddleware.Frontend)
 
-		e.Router.GET("/logs", func(c echo.Context) error {
+		se.Router.GET("/logs", func(e *core.RequestEvent) error {
 			logs := make([]Log, 0)
-			pb.Dao().DB().
+			query := app.DB().
 				Select("id", "alias", "args", "created").
-				From("logs").
-				Limit(30).
+				From("logs")
+
+			q := e.Request.URL.Query().Get("q")
+			alias := strings.Split(q, " ")[0]
+			if alias != "" {
+				query = query.Where(dbx.HashExp{"alias": alias})
+			}
+
+			query.Limit(30).
 				OrderBy("created DESC").
 				All(&logs)
+
 			logsContext := make([]LogContext, len(logs))
 			for i, log := range logs {
+				args := strings.Join(log.Args, " ")
 				logsContext[i] = LogContext{
 					Alias:     log.Alias,
-					Args:      strings.Join(log.Args, " "),
+					Args:      args,
 					CreatedAt: log.CreatedAt.Time().Format("2006-01-02 15:04:05"),
 				}
 			}
-			return tmpls.RenderEcho(c.Response().Writer, "logs", logsContext, c)
-		}, authMiddleware.Process)
+			return tmpls.RenderEcho(e.Response, "logs", logsContext, e)
+		}).BindFunc(authMiddleware.Frontend)
 
-		e.Router.GET("/stats", func(c echo.Context) error {
-			topN, _ := getTopAliases(pb, 10)
-			lowN, _ := getTopAliases(pb, -10)
+		se.Router.GET("/stats", func(e *core.RequestEvent) error {
+			topN, _ := getTopAliases(app, 10)
+			lowN, _ := getTopAliases(app, -10)
 			result := make(map[string]interface{})
 			result["topn"] = topN
 			result["lown"] = lowN
-			return tmpls.RenderEcho(c.Response().Writer, "stats", result, c)
-		}, authMiddleware.Process)
+			return tmpls.RenderEcho(e.Response, "stats", result, e)
+		}).BindFunc(authMiddleware.Frontend)
 
-		e.Router.GET("/expand/html", func(c echo.Context) error {
-			q := c.QueryParam("q")
-
-			itemsResult := getItems(pb, q)
-			switch itemsResult.State {
-			case NEW_ITEM:
-				c.Response().Header().Set("HX-Redirect", fmt.Sprintf("/new?alias=%s", itemsResult.FirstQ))
-				return c.String(http.StatusOK, "ok")
-			case GOOGLE_MODE:
-				// This is a special shortcut
-				createLog(pb, itemsResult.Expansion.Alias, itemsResult.Expansion.Args, c.Get(DEVICE_ID_CONTEXT_KEY).(string))
-				c.Response().Header().Set("HX-Redirect", itemsResult.Expansion.URL)
-				return c.String(http.StatusOK, "ok")
-			default:
-				createLog(pb, itemsResult.Expansion.Alias, itemsResult.Expansion.Args, c.Get(DEVICE_ID_CONTEXT_KEY).(string))
-				c.Response().Header().Set("HX-Redirect", itemsResult.Expansion.URL)
-				return c.String(http.StatusOK, "ok")
+		se.Router.GET("/help", func(e *core.RequestEvent) error {
+			ctx := HelpContext{
+				Token:  authMiddleware.GetDeviceIdFromCookie(e),
+				AppURL: app.Settings().Meta.AppURL,
 			}
-		}, authMiddleware.Process)
-
-		e.Router.GET("/api/items", func(c echo.Context) error {
-			q := c.Request().URL.Query().Get("q")
-			itemsResult := getItems(pb, q)
-			return c.JSON(http.StatusOK, itemsResult.Items)
+			return tmpls.RenderEcho(e.Response, "help", ctx, e)
 		})
 
-		e.Router.GET("/api/expand", func(c echo.Context) error {
-			q := c.QueryParam("q")
-			itemsResult := getItems(pb, q)
+		se.Router.GET("/login", func(e *core.RequestEvent) error {
+			return tmpls.RenderEcho(e.Response, "login", nil, e)
+		})
+
+		se.Router.POST("/login", func(e *core.RequestEvent) error {
+			e.Request.ParseForm()
+			cookie := new(http.Cookie)
+			cookie.Name = COOKIE_NAME
+			cookie.Value = e.Request.FormValue("token")
+			cookie.Expires = time.Now().Add(60 * 24 * time.Hour)
+			e.SetCookie(cookie)
+			e.Response.Header().Set("HX-Redirect", "/")
+			return e.String(http.StatusOK, "ok")
+		})
+
+		se.Router.GET("/logout", func(e *core.RequestEvent) error {
+			cookie := new(http.Cookie)
+			cookie.Name = COOKIE_NAME
+			cookie.Value = ""
+			cookie.MaxAge = -1
+			e.SetCookie(cookie)
+			return e.Redirect(http.StatusTemporaryRedirect, "/login")
+		})
+
+		se.Router.GET("/nav", func(e *core.RequestEvent) error {
+			deviceId := authMiddleware.GetDeviceIdFromCookie(e)
+			ctx := NavContext{}
+			if deviceId != "" {
+				ctx.IsLoggedIn = true
+			}
+			return tmpls.RenderEcho(e.Response, "nav", ctx, e)
+		})
+
+		se.Router.GET("/expand/html", func(e *core.RequestEvent) error {
+			q := e.Request.URL.Query().Get("q")
+
+			itemsResult := getItems(app, q)
 			switch itemsResult.State {
 			case NEW_ITEM:
-				return c.Redirect(http.StatusTemporaryRedirect, fmt.Sprintf("/new?alias=%s", itemsResult.FirstQ))
+				e.Response.Header().Set("HX-Redirect", fmt.Sprintf("/new?alias=%s", itemsResult.FirstQ))
+				return e.String(http.StatusOK, "ok")
 			case GOOGLE_MODE:
 				// This is a special shortcut
-				createLog(pb, itemsResult.Expansion.Alias, itemsResult.Expansion.Args, c.Get(DEVICE_ID_CONTEXT_KEY).(string))
-				return c.Redirect(http.StatusTemporaryRedirect, itemsResult.Expansion.URL)
+				createLog(app, itemsResult.Expansion.Alias, itemsResult.Expansion.Args, e.Get(DEVICE_ID_CONTEXT_KEY).(string))
+				e.Response.Header().Set("HX-Redirect", itemsResult.Expansion.URL)
+				return e.String(http.StatusOK, "ok")
 			default:
-				createLog(pb, itemsResult.Expansion.Alias, itemsResult.Expansion.Args, c.Get(DEVICE_ID_CONTEXT_KEY).(string))
-				return c.Redirect(http.StatusTemporaryRedirect, itemsResult.Expansion.URL)
+				createLog(app, itemsResult.Expansion.Alias, itemsResult.Expansion.Args, e.Get(DEVICE_ID_CONTEXT_KEY).(string))
+				e.Response.Header().Set("HX-Redirect", itemsResult.Expansion.URL)
+				return e.String(http.StatusOK, "ok")
 			}
-		}, authMiddleware.Process)
+		}).BindFunc(authMiddleware.Frontend)
 
-		e.Router.GET("/api/opensearch", func(c echo.Context) error {
+		se.Router.GET("/api/items", func(e *core.RequestEvent) error {
+			q := e.Request.URL.Query().Get("q")
+			itemsResult := getItems(app, q)
+			return e.JSON(http.StatusOK, itemsResult.Items)
+		}).BindFunc(authMiddleware.API)
+
+		se.Router.GET("/api/expand", func(e *core.RequestEvent) error {
+			q := e.Request.URL.Query().Get("q")
+			itemsResult := getItems(app, q)
+			switch itemsResult.State {
+			case NEW_ITEM:
+				return e.Redirect(http.StatusTemporaryRedirect, fmt.Sprintf("/new?alias=%s", itemsResult.FirstQ))
+			case GOOGLE_MODE:
+				// This is a special shortcut
+				createLog(app, itemsResult.Expansion.Alias, itemsResult.Expansion.Args, e.Get(DEVICE_ID_CONTEXT_KEY).(string))
+				return e.Redirect(http.StatusTemporaryRedirect, itemsResult.Expansion.URL)
+			default:
+				createLog(app, itemsResult.Expansion.Alias, itemsResult.Expansion.Args, e.Get(DEVICE_ID_CONTEXT_KEY).(string))
+				return e.Redirect(http.StatusTemporaryRedirect, itemsResult.Expansion.URL)
+			}
+		}).BindFunc(authMiddleware.API)
+
+		se.Router.GET("/api/opensearch", func(e *core.RequestEvent) error {
 			// TODO: possibly parse `format` GET-parameter and output differently, i.e. in XML
-			q := c.QueryParam("q")
+			q := e.Request.URL.Query().Get("q")
 			qParts := strings.Split(q, " ")
-			itemsResult := getItems(pb, q)
+			itemsResult := getItems(app, q)
 			suggestions := make([]string, len(itemsResult.Items))
 			for i := 0; i < len(itemsResult.Items); i++ {
 				expansion := expand(itemsResult.Items[i], q)
@@ -165,54 +214,39 @@ func main() {
 				// []string{"description"},
 				// []string{"https://google.com/?q=asdf"},
 			}
-			return c.JSON(http.StatusOK, result)
-		})
+			return e.JSON(http.StatusOK, result)
+		}).BindFunc(authMiddleware.API)
 
-		e.Router.GET("/opensearch.xml", func(c echo.Context) error {
+		se.Router.GET("/opensearch.xml", func(e *core.RequestEvent) error {
 			// https://github.com/dewitt/opensearch/blob/master/opensearch-1-1-draft-6.md
 			// TODO:
 			// 	- add more response formats
 			// 	<Url type="application/atom+xml" template="{{ .BaseURL }}/?q={searchTerms}&amp;format=atom"/>
 			// 	<Url type="application/rss+xml" template="{{ .BaseURL }}/?q={searchTerms}&amp;pw={startPage?}&amp;format=rss"/>
 
-			appUrl := pb.Settings().Meta.AppUrl
+			appUrl := app.Settings().Meta.AppURL
 			var output bytes.Buffer
 			err := tmpls.Execute(&output, "opensearch", map[string]string{"BaseURL": appUrl})
 			if err != nil {
 				return err
 			}
-			c.Response().Header().Set("Content-Type", "application/opensearchdescription+xml")
-			return c.XMLBlob(http.StatusOK, output.Bytes())
+			e.Response.Header().Set("Content-Type", "application/opensearchdescription+xml")
+			return e.XML(http.StatusOK, output.Bytes())
 			// not using AuthMiddleware, because Firefox can't download the search engine definition otherwise.
 		})
 
-		e.Router.GET("/login", func(c echo.Context) error {
-			return tmpls.RenderEcho(c.Response().Writer, "login", nil, c)
-		})
-
-		e.Router.POST("/login", func(c echo.Context) error {
-			c.Request().ParseForm()
-			cookie := new(http.Cookie)
-			cookie.Name = COOKIE_NAME
-			cookie.Value = c.FormValue("token")
-			cookie.Expires = time.Now().Add(60 * 24 * time.Hour)
-			c.SetCookie(cookie)
-			c.Response().Header().Set("HX-Redirect", "/")
-			return c.String(http.StatusOK, "ok")
-		})
-
-		return nil
+		return se.Next()
 	})
 
 	isGoRun := strings.HasPrefix(os.Args[0], os.TempDir())
 
-	migratecmd.MustRegister(pb, pb.RootCmd, migratecmd.Config{
+	migratecmd.MustRegister(app, app.RootCmd, migratecmd.Config{
 		// enable auto creation of migration files when making collection changes in the Admin UI
 		// (the isGoRun check is to enable it only during development)
 		Automigrate: isGoRun,
 	})
 
-	if err := pb.Start(); err != nil {
+	if err := app.Start(); err != nil {
 		log.Fatal(err)
 	}
 }
@@ -223,10 +257,12 @@ const (
 )
 
 type Item struct {
-	Name  string   `db:"name" form:"name" json:"name"`
-	Alias string   `db:"alias" form:"alias" json:"alias"`
-	URL   string   `db:"url" form:"url" json:"url"`
-	Tags  []string `form:"tags" json:"tags"`
+	ID           string   `db:"id" json:"id"`
+	CollectionID string   `json:"collection_id"`
+	Name         string   `db:"name" form:"name" json:"name"`
+	Alias        string   `db:"alias" form:"alias" json:"alias"`
+	URL          string   `db:"url" form:"url" json:"url"`
+	Tags         []string `form:"tags" json:"tags"`
 }
 
 type Expansion struct {
@@ -246,7 +282,7 @@ type ItemsContext struct {
 type Log struct {
 	ID        string                  `db:"id"`
 	Alias     string                  `db:"alias"`
-	Args      types.JsonArray[string] `db:"args"`
+	Args      types.JSONArray[string] `db:"args"`
 	CreatedAt types.DateTime          `db:"created"`
 }
 
@@ -254,6 +290,15 @@ type LogContext struct {
 	Alias     string
 	Args      string
 	CreatedAt string
+}
+
+type NavContext struct {
+	IsLoggedIn bool
+}
+
+type HelpContext struct {
+	Token  string
+	AppURL string
 }
 
 func expand(item Item, q string) Expansion {
@@ -275,9 +320,9 @@ func expand(item Item, q string) Expansion {
 	}
 }
 
-func getItemsByPrefix(pb *pocketbase.PocketBase, prefix string) []Item {
+func getItemsByPrefix(app *pocketbase.PocketBase, prefix string) []Item {
 	items := make([]Item, 0)
-	pb.Dao().DB().
+	app.DB().
 		NewQuery("SELECT alias, name, url FROM items WHERE alias LIKE {:like} ORDER BY (CASE WHEN alias = {:prefix} THEN 1 WHEN alias LIKE {:like} THEN 2 ELSE 3 END), alias, created ASC LIMIT 10").
 		Bind(dbx.Params{
 			"prefix": prefix,
@@ -287,9 +332,9 @@ func getItemsByPrefix(pb *pocketbase.PocketBase, prefix string) []Item {
 	return items
 }
 
-func getItemsByExactMatch(pb *pocketbase.PocketBase, alias string) []Item {
+func getItemsByExactMatch(app *pocketbase.PocketBase, alias string) []Item {
 	items := make([]Item, 0)
-	pb.Dao().DB().
+	app.DB().
 		NewQuery("SELECT alias, name, url FROM items WHERE alias = {:alias}").
 		Bind(dbx.Params{
 			"alias": alias,
@@ -298,32 +343,32 @@ func getItemsByExactMatch(pb *pocketbase.PocketBase, alias string) []Item {
 	return items
 }
 
-func createItem(pb *pocketbase.PocketBase, item Item) error {
-	collection, err := pb.Dao().FindCollectionByNameOrId("items")
+func createItem(app *pocketbase.PocketBase, item Item) error {
+	collection, err := app.FindCollectionByNameOrId("items")
 	if err != nil {
 		return err
 	}
-	record := models.NewRecord(collection)
+	record := core.NewRecord(collection)
 	record.Set("name", item.Name)
 	record.Set("alias", item.Alias)
 	record.Set("url", item.URL)
 	record.Set("tags", item.Tags)
-	if err := pb.Dao().SaveRecord(record); err != nil {
+	if err := app.Save(record); err != nil {
 		return err
 	}
 	return nil
 }
 
-func createLog(pb *pocketbase.PocketBase, alias string, args []string, deviceId string) error {
-	collection, err := pb.Dao().FindCollectionByNameOrId("logs")
+func createLog(app *pocketbase.PocketBase, alias string, args []string, deviceId string) error {
+	collection, err := app.FindCollectionByNameOrId("logs")
 	if err != nil {
 		return err
 	}
-	record := models.NewRecord(collection)
+	record := core.NewRecord(collection)
 	record.Set("alias", alias)
 	record.Set("args", args)
 	record.Set("device", deviceId)
-	if err := pb.Dao().SaveRecord(record); err != nil {
+	if err := app.Save(record); err != nil {
 		return err
 	}
 	return nil
@@ -334,14 +379,14 @@ type TopAlias struct {
 	Count int64  `db:"count"`
 }
 
-func getTopAliases(pb *pocketbase.PocketBase, limit int64) ([]TopAlias, error) {
+func getTopAliases(app *pocketbase.PocketBase, limit int64) ([]TopAlias, error) {
 	order := "DESC"
 	if limit < 0 {
 		limit = -limit
 		order = "ASC"
 	}
 	aliases := make([]TopAlias, 0)
-	pb.Dao().DB().
+	app.DB().
 		Select("alias", "count(*) as count").
 		From("logs").
 		GroupBy("alias").
@@ -369,8 +414,8 @@ type ItemsResult struct {
 	FirstQ    string
 }
 
-func getItems(pb *pocketbase.PocketBase, q string) ItemsResult {
-	appURL := pb.Settings().Meta.AppUrl
+func getItems(app *pocketbase.PocketBase, q string) ItemsResult {
+	appURL := app.Settings().Meta.AppURL
 	// q is a space separated alias with parameters, which has to be split into
 	// certain number of parts, which are replaced in %s in the URL
 	// For example, q can be `g test`. `g` is an alias and `test` is a parameter.
@@ -385,10 +430,10 @@ func getItems(pb *pocketbase.PocketBase, q string) ItemsResult {
 	var items []Item
 
 	if len(qParts) > 1 {
-		items = getItemsByExactMatch(pb, qParts[0])
+		items = getItemsByExactMatch(app, qParts[0])
 	} else {
 		// Fisrt element of the query is ~~almost~~ always an alias prefix
-		items = getItemsByPrefix(pb, qParts[0])
+		items = getItemsByPrefix(app, qParts[0])
 	}
 
 	if len(items) == 0 {
@@ -426,7 +471,7 @@ func getItems(pb *pocketbase.PocketBase, q string) ItemsResult {
 }
 
 type AuthMiddleware struct {
-	pb *pocketbase.PocketBase
+	app *pocketbase.PocketBase
 }
 
 type Device struct {
@@ -434,23 +479,48 @@ type Device struct {
 	Token string `db:"token"`
 }
 
-func (m *AuthMiddleware) Process(next echo.HandlerFunc) echo.HandlerFunc {
-	return func(c echo.Context) error {
-		cookie, err := c.Cookie(COOKIE_NAME)
-		if err != nil {
-			return c.String(http.StatusOK, "")
-		}
-		devices := []Device{}
-		m.pb.Dao().DB().
-			NewQuery("SELECT id, token FROM devices WHERE token = {:token}").
-			Bind(dbx.Params{
-				"token": cookie.Value,
-			}).
-			All(&devices)
-		if len(devices) != 1 {
-			return c.String(http.StatusOK, "")
-		}
-		c.Set(DEVICE_ID_CONTEXT_KEY, devices[0].ID)
-		return next(c)
+func (m *AuthMiddleware) GetDeviceIdFromCookie(e *core.RequestEvent) string {
+	cookie, err := e.Request.Cookie(COOKIE_NAME)
+	if err != nil {
+		return ""
 	}
+	devices := []Device{}
+	m.app.DB().
+		NewQuery("SELECT id FROM devices WHERE token = {:token}").
+		Bind(dbx.Params{
+			"token": cookie.Value,
+		}).
+		All(&devices)
+	if len(devices) != 1 {
+		return ""
+	}
+	return devices[0].ID
+}
+
+func (m *AuthMiddleware) Frontend(e *core.RequestEvent) error {
+	deviceId := m.GetDeviceIdFromCookie(e)
+	if deviceId == "" {
+		return e.Redirect(http.StatusTemporaryRedirect, "/login")
+	}
+	e.Set(DEVICE_ID_CONTEXT_KEY, deviceId)
+	return e.Next()
+}
+
+func (m *AuthMiddleware) API(e *core.RequestEvent) error {
+	token := e.Request.URL.Query().Get("token")
+	if token == "" {
+		return e.String(http.StatusOK, "no token")
+	}
+	devices := []Device{}
+	m.app.DB().
+		NewQuery("SELECT id, token FROM devices WHERE token = {:token}").
+		Bind(dbx.Params{
+			"token": token,
+		}).
+		All(&devices)
+	if len(devices) != 1 {
+		return e.String(http.StatusOK, "")
+	}
+	e.Set(DEVICE_ID_CONTEXT_KEY, devices[0].ID)
+	return e.Next()
 }

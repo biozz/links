@@ -4,3 +4,4 @@ tmp/
 .python-version
 .envrc
 __pycache__/
+.zed

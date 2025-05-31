@@ -36,7 +36,7 @@ func NewServeCommand(app core.App, showStartBanner bool) *cobra.Command {
 				}
 			}
 
-			_, err := apis.Serve(app, apis.ServeConfig{
+			err := apis.Serve(app, apis.ServeConfig{
 				HttpAddr:           httpAddr,
 				HttpsAddr:          httpsAddr,
 				ShowStartBanner:    showStartBanner,

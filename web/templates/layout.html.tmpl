@@ -5,16 +5,25 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0" />
     <meta name="theme-color" content="#000000" />
-    <link rel="stylesheet" href="/static/style.css">
+    <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+    <link rel="stylesheet" href="/static/pico.min.css">
     <link rel="search" type="application/opensearchdescription+xml" href="/opensearch.xml" title="Links">
     <title>Links</title>
   </head>
   <body>
-  <div class="container" x-data="{search: '', expandURL: ''}">
-    {{ template "content" . }}
-  </div>
-  <script src="/static/htmx.min.js"></script>
-  <script src="/static/alpine.min.js"></script>
+    <main
+      class="container"
+      x-data="{search: '', expandURL: ''}"
+    >
+      <nav hx-get="/nav" hx-trigger="load" hx-swap="outerHTML">
+        <ul>
+          <li><strong><a href="/">Links</a></strong></li>
+        </ul>
+      </nav>
+      {{ template "content" . }}
+    </main>
+    <script src="/static/htmx.min.js"></script>
+    <script src="/static/alpine.min.js"></script>
   </body>
 </html>
 {{ end }}

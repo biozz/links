@@ -11,25 +11,20 @@ package cron
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"sync"
 	"time"
 )
-
-type job struct {
-	schedule *Schedule
-	run      func()
-}
 
 // Cron is a crontab-like struct for tasks/jobs scheduling.
 type Cron struct {
 	timezone   *time.Location
 	ticker     *time.Ticker
 	startTimer *time.Timer
-	jobs       map[string]*job
-	interval   time.Duration
 	tickerDone chan bool
-
-	sync.RWMutex
+	jobs       []*Job
+	interval   time.Duration
+	mux        sync.RWMutex
 }
 
 // New create a new Cron struct with default tick interval of 1 minute
@@ -41,7 +36,7 @@ func New() *Cron {
 	return &Cron{
 		interval:   1 * time.Minute,
 		timezone:   time.UTC,
-		jobs:       map[string]*job{},
+		jobs:       []*Job{},
 		tickerDone: make(chan bool),
 	}
 }
@@ -50,10 +45,10 @@ func New() *Cron {
 // (it usually should be >= 1 minute).
 func (c *Cron) SetInterval(d time.Duration) {
 	// update interval
-	c.Lock()
+	c.mux.Lock()
 	wasStarted := c.ticker != nil
 	c.interval = d
-	c.Unlock()
+	c.mux.Unlock()
 
 	// restart the ticker
 	if wasStarted {
@@ -63,8 +58,8 @@ func (c *Cron) SetInterval(d time.Duration) {
 
 // SetTimezone changes the current cron tick timezone.
 func (c *Cron) SetTimezone(l *time.Location) {
-	c.Lock()
-	defer c.Unlock()
+	c.mux.Lock()
+	defer c.mux.Unlock()
 
 	c.timezone = l
 }
@@ -83,57 +78,83 @@ func (c *Cron) MustAdd(jobId string, cronExpr string, run func()) {
 //
 // cronExpr is a regular cron expression, eg. "0 */3 * * *" (aka. at minute 0 past every 3rd hour).
 // Check cron.NewSchedule() for the supported tokens.
-func (c *Cron) Add(jobId string, cronExpr string, run func()) error {
-	if run == nil {
-		return errors.New("failed to add new cron job: run must be non-nil function")
+func (c *Cron) Add(jobId string, cronExpr string, fn func()) error {
+	if fn == nil {
+		return errors.New("failed to add new cron job: fn must be non-nil function")
 	}
-
-	c.Lock()
-	defer c.Unlock()
 
 	schedule, err := NewSchedule(cronExpr)
 	if err != nil {
 		return fmt.Errorf("failed to add new cron job: %w", err)
 	}
 
-	c.jobs[jobId] = &job{
+	c.mux.Lock()
+	defer c.mux.Unlock()
+
+	// remove previous (if any)
+	c.jobs = slices.DeleteFunc(c.jobs, func(j *Job) bool {
+		return j.Id() == jobId
+	})
+
+	// add new
+	c.jobs = append(c.jobs, &Job{
+		id:       jobId,
+		fn:       fn,
 		schedule: schedule,
-		run:      run,
-	}
+	})
 
 	return nil
 }
 
 // Remove removes a single cron job by its id.
 func (c *Cron) Remove(jobId string) {
-	c.Lock()
-	defer c.Unlock()
+	c.mux.Lock()
+	defer c.mux.Unlock()
 
-	delete(c.jobs, jobId)
+	if c.jobs == nil {
+		return // nothing to remove
+	}
+
+	c.jobs = slices.DeleteFunc(c.jobs, func(j *Job) bool {
+		return j.Id() == jobId
+	})
 }
 
 // RemoveAll removes all registered cron jobs.
 func (c *Cron) RemoveAll() {
-	c.Lock()
-	defer c.Unlock()
+	c.mux.Lock()
+	defer c.mux.Unlock()
 
-	c.jobs = map[string]*job{}
+	c.jobs = []*Job{}
 }
 
 // Total returns the current total number of registered cron jobs.
 func (c *Cron) Total() int {
-	c.RLock()
-	defer c.RUnlock()
+	c.mux.RLock()
+	defer c.mux.RUnlock()
 
 	return len(c.jobs)
+}
+
+// Jobs returns a shallow copy of the currently registered cron jobs.
+func (c *Cron) Jobs() []*Job {
+	c.mux.RLock()
+	defer c.mux.RUnlock()
+
+	copy := make([]*Job, len(c.jobs))
+	for i, j := range c.jobs {
+		copy[i] = j
+	}
+
+	return copy
 }
 
 // Stop stops the current cron ticker (if not already).
 //
 // You can resume the ticker by calling Start().
 func (c *Cron) Stop() {
-	c.Lock()
-	defer c.Unlock()
+	c.mux.Lock()
+	defer c.mux.Unlock()
 
 	if c.startTimer != nil {
 		c.startTimer.Stop()
@@ -160,11 +181,11 @@ func (c *Cron) Start() {
 	next := now.Add(c.interval).Truncate(c.interval)
 	delay := next.Sub(now)
 
-	c.Lock()
+	c.mux.Lock()
 	c.startTimer = time.AfterFunc(delay, func() {
-		c.Lock()
+		c.mux.Lock()
 		c.ticker = time.NewTicker(c.interval)
-		c.Unlock()
+		c.mux.Unlock()
 
 		// run immediately at 00
 		c.runDue(time.Now())
@@ -181,27 +202,27 @@ func (c *Cron) Start() {
 			}
 		}()
 	})
-	c.Unlock()
+	c.mux.Unlock()
 }
 
 // HasStarted checks whether the current Cron ticker has been started.
 func (c *Cron) HasStarted() bool {
-	c.RLock()
-	defer c.RUnlock()
+	c.mux.RLock()
+	defer c.mux.RUnlock()
 
 	return c.ticker != nil
 }
 
 // runDue runs all registered jobs that are scheduled for the provided time.
 func (c *Cron) runDue(t time.Time) {
-	c.RLock()
-	defer c.RUnlock()
+	c.mux.RLock()
+	defer c.mux.RUnlock()
 
 	moment := NewMoment(t.In(c.timezone))
 
 	for _, j := range c.jobs {
 		if j.schedule.IsDue(moment) {
-			go j.run()
+			go j.Run()
 		}
 	}
 }

@@ -1,0 +1,26 @@
+{{ define "content" }}
+
+<h2>Firefox</h2>
+
+<p>Recent versions of Firefox allow you to configure custom search engine. Go to settings, select Search and add a new one. Then open advanced settings and fill in as follows:</p>
+
+<ul>
+  <li>Search engine name:<br />Links</li>
+  <li>URL with %s in place of search term:<br /><pre>{{ .AppURL }}/api/expand?t={{ .Token }}&q=%s</pre></li>
+  <li>Keyword (optional):<br />links</li>
+  <li>Suggestions URL with %s in place of search term (optional):<br /><pre>{{ .AppURL}}/api/opensearch?t={{ .Token }}&q=%s</pre></li>
+</ul>
+
+<p>Now select "Links" as your default search engine and you are good to go!</p>
+
+<h2>Chrome & co.</h2>
+
+<p>Chromium-based browsers allow you to set only the expand URL. Go to search settings and new search enging with the following url:</p>
+
+<pre>{{ .AppURL }}/api/expand?t={{ .Token }}&q=%s</pre>
+
+<h2>Others</h2>
+
+Got any tips on other browsers? Let us know on the <a href="https://github.com/biozz/links/issues">GitHub issues</a> page.
+
+{{ end }}

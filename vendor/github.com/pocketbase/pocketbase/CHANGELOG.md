@@ -1,1092 +1,576 @@
-## v0.22.18
+## v0.28.2
 
-- Improved files delete performance when using the local filesystem by adding a trailing slash to the `DeletePrefix` call to ensure that the list iterator will start "walking" from the prefix directory and not from its parent ([#5246](https://github.com/pocketbase/pocketbase/discussions/5246)).
+- Loaded latin-ext charset for the default text fonts ([#6869](https://github.com/pocketbase/pocketbase/issues/6869)).
 
-- Updated Go deps.
+- Updated view query CAST regex to properly recognize multiline expressions ([#6860](https://github.com/pocketbase/pocketbase/pull/6860); thanks @azat-ismagilov).
 
+- Updated Go and npm dependencies.
 
-## v0.22.17
 
-- Updated the `editor` field to use the latest TinyMCE 6.8.4 and enabled `convert_unsafe_embeds:true` by default per the security advisories.
-  _The Admin UI shouldn't be affected by the older TinyMCE because we don't use directly the vulnerable options/plugins and we have a default CSP, but it is recommended to update even just for silencing the CI/CD warnings._
+## v0.28.1
 
-- Disabled mouse selection when changing the sidebar width.
-  _This should also fix the reported Firefox issue when the sidebar width "resets" on mouse release out of the page window._
+- Fixed `json_each`/`json_array_length` normalizations to properly check for array values ([#6835](https://github.com/pocketbase/pocketbase/issues/6835)).
 
-- Other minor improvements (updated the logs delete check and tests, normalized internal errors formatting, updated Go deps, etc.)
 
+## v0.28.0
 
-## v0.22.16
+- Write the default response body of `*Request` hooks that are wrapped in a transaction after the related transaction completes to allow propagating the transaction error ([#6462](https://github.com/pocketbase/pocketbase/discussions/6462#discussioncomment-12207818)).
 
-- Fixed the days calculation for triggering old logs deletion ([#5179](https://github.com/pocketbase/pocketbase/pull/5179); thanks @nehmeroumani).
-  _Note that the previous versions correctly delete only the logs older than the configured setting but due to the typo the delete query is invoked unnecessary on each logs batch write._
+- Updated `app.DB()` to automatically routes raw write SQL statements to the nonconcurrent db pool ([#6689](https://github.com/pocketbase/pocketbase/discussions/6689)).
+    _For the rare cases when it is needed users still have the option to explicitly target the specific pool they want using `app.ConcurrentDB()`/`app.NonconcurrentDB()`._
 
+- ⚠️ Changed the default `json` field max size to 1MB.
+    _Users still have the option to adjust the default limit from the collection field options but keep in mind that storing large strings/blobs in the database is known to cause performance issues and should be avoided when possible._
 
-## v0.22.15
+- ⚠️ Soft-deprecated and replaced `filesystem.System.GetFile(fileKey)` with `filesystem.System.GetReader(fileKey)` to avoid the confusion with `filesystem.File`.
+    _The old method will still continue to work for at least until v0.29.0 but you'll get a console warning to replace it with `GetReader`._
 
-- Added mutex to `tests.TestMailer()` to minimize tests data race warnings ([#5157](https://github.com/pocketbase/pocketbase/issues/5157)).
+- Added new `filesystem.System.GetReuploadableFile(fileKey, preserveName)` method to return an existing blob as a `*filesystem.File` value ([#6792](https://github.com/pocketbase/pocketbase/discussions/6792)).
+    _This method could be useful in case you want to clone an existing Record file and assign it to a new Record (e.g. in a Record duplicate action)._
 
-- Updated goja and the other Go dependencies.
+- Other minor improvements (updated the GitHub release min Go version to 1.23.9, updated npm and Go deps, etc.)
 
-- Bumped the min Go version in the GitHub release action to Go 1.22.5 since it comes with [`net/http` security fixes](https://github.com/golang/go/issues?q=milestone%3AGo1.22.5).
 
+## v0.27.2
 
-## v0.22.14
+- Added workers pool when cascade deleting record files to minimize _"thread exhaustion"_ errors ([#6780](https://github.com/pocketbase/pocketbase/discussions/6780)).
 
-- Added OAuth2 POST redirect support (in case of `response_mode=form_post`) to allow specifying scopes for the Apple OAuth2 integration.
+- Updated the `:excerpt` fields modifier to properly account for multibyte characters ([#6778](https://github.com/pocketbase/pocketbase/issues/6778)).
 
-    Note 1: If you are using the "Manual code exchange" flow with Apple (aka. `authWithOAuth2Code()`), you need to either update your custom
-    redirect handler to accept POST requests OR if you want to keep the old behavior and don't need the Apple user's email - replace in the Apple authorization url `response_mode=form_post` back to `response_mode=query`.
+- Use `rowid` as count column for non-view collections to minimize the need of having the id field in a covering index ([#6739](https://github.com/pocketbase/pocketbase/discussions/6739))
 
-    Note 2: Existing users that have already logged in with Apple may need to revoke their access in order to see the email sharing options as shown in [this screenshot](https://github.com/pocketbase/pocketbase/discussions/5074#discussioncomment-9801855).
-    If you want to force the new consent screen you could register a new Apple OAuth2 app.
 
-- ⚠️ Fixed a security vulnerability related to the OAuth2 email autolinking (thanks to @dalurness for reporting it).
+## v0.27.1
 
-    Just to be safe I've also published a [GitHub security advisory](https://github.com/pocketbase/pocketbase/security/advisories/GHSA-m93w-4fxv-r35v) (_may take some time to show up in the related security databases_).
+- Updated example `geoPoint` API preview body data.
 
-    In order to be exploited you must have **both** OAuth2 and Password auth methods enabled.
+- Added JSVM `new GeoPointField({ ... })` constructor.
 
-    A possible attack scenario could be:
-    - a malicious actor register with the targeted user's email (it is unverified)
-    - at some later point in time the targeted user stumble on your app and decides to sign-up with OAuth2 (_this step could be also initiated by the attacker by sending an invite email to the targeted user_)
-    - on successful OAuth2 auth we search for an existing PocketBase user matching with the OAuth2 user's email and associate them
-    - because we haven't changed the password of the existing PocketBase user during the linking, the malicious actor has access to the targeted user account and will be able to login with the initially created email/password
+- Added _partial_ WebP thumbs generation (_the thumbs will be stored as PNG_; [#6744](https://github.com/pocketbase/pocketbase/pull/6744)).
 
-    To prevent this for happening we now reset the password for this specific case if the previously created user wasn't verified (an exception to this is if the linking is explicit/manual, aka. when you send `Authorization:TOKEN` with the OAuth2 auth call).
+- Updated npm dev dependencies.
 
-    Additionally to warn users we now send an email alert in case the user has logged in with password but has at least one OAuth2 account linked. It looks something like:
 
-    _Hello,
-    Just to let you know that someone has logged in to your Acme account using a password while you already have OAuth2 GitLab auth linked.
-    If you have recently signed in with a password, you may disregard this email.
-    **If you don't recognize the above action, you should immediately change your Acme account password.**
-    Thanks,
-    Acme team_
+## v0.27.0
 
-    The flow will be further improved with the [ongoing refactoring](https://github.com/pocketbase/pocketbase/discussions/4355) and we will start sending emails for "unrecognized device" logins (OTP and MFA is already implemented and will be available with the next v0.23.0 release in the near future).
-
-
-## v0.22.13
-
-- Fixed rules inconsistency for text literals when inside parenthesis ([#5017](https://github.com/pocketbase/pocketbase/issues/5017)).
-
-- Updated Go deps.
-
-
-## v0.22.12
-
-- Fixed calendar picker grid layout misalignment on Firefox ([#4865](https://github.com/pocketbase/pocketbase/issues/4865)).
-
-- Updated Go deps and bumped the min Go version in the GitHub release action to Go 1.22.3 since it comes with [some minor security fixes](https://github.com/golang/go/issues?q=milestone%3AGo1.22.3).
-
-
-## v0.22.11
-
-- Load the full record in the relation picker edit panel ([#4857](https://github.com/pocketbase/pocketbase/issues/4857)).
-
-
-## v0.22.10
-
-- Updated the uploaded filename normalization to take double extensions in consideration ([#4824](https://github.com/pocketbase/pocketbase/issues/4824))
-
-- Added Collection models cache to help speed up the common List and View requests execution with ~25%.
-  _This was extracted from the ongoing work on [#4355](https://github.com/pocketbase/pocketbase/discussions/4355) and there are many other small optimizations already implemented but they will have to wait for the refactoring to be finalized._
-
-
-## v0.22.9
-
-- Fixed Admin UI OAuth2 "Clear all fields" btn action to properly unset all form fields ([#4737](https://github.com/pocketbase/pocketbase/issues/4737)).
-
-
-## v0.22.8
-
-- Fixed '~' auto wildcard wrapping when the param has escaped `%` character ([#4704](https://github.com/pocketbase/pocketbase/discussions/4704)).
-
-- Other minor UI improvements (added `aria-expanded=true/false` to the dropdown triggers, added contrasting border around the default mail template btn style, etc.).
-
-- Updated Go deps and bumped the min Go version in the GitHub release action to Go 1.22.2 since it comes with [some `net/http` security and bug fixes](https://github.com/golang/go/issues?q=milestone%3AGo1.22.2).
-
-
-## v0.22.7
-
-- Replaced the default `s3blob` driver with a trimmed vendored version to reduce the binary size with ~10MB.
-  _It can be further reduced with another ~10MB once we replace entirely the `aws-sdk-go-v2` dependency but I stumbled on some edge cases related to the headers signing and for now is on hold._
-
-- Other minor improvements (updated GitLab OAuth2 provider logo [#4650](https://github.com/pocketbase/pocketbase/pull/4650), normalized error messages, updated npm dependencies, etc.)
-
-
-## v0.22.6
-
-- Admin UI accessibility improvements:
-  - Fixed the dropdowns tab/enter/space keyboard navigation ([#4607](https://github.com/pocketbase/pocketbase/issues/4607)).
-  - Added `role`, `aria-label`, `aria-hidden` attributes to some of the elements in attempt to better assist screen readers.
-
-
-## v0.22.5
-
-- Minor test helpers fixes ([#4600](https://github.com/pocketbase/pocketbase/issues/4600)):
-  - Call the `OnTerminate` hook on `TestApp.Cleanup()`.
-  - Automatically run the DB migrations on initializing the test app with `tests.NewTestApp()`.
-
-- Added more elaborate warning message when restoring a backup explaining how the operation works.
-
-- Skip irregular files (symbolic links, sockets, etc.) when restoring a backup zip from the Admin UI or calling `archive.Extract(src, dst)` because they come with too many edge cases and ambiguities.
-  <details>
-    <summary><b><i>More details</i></b></summary>
-
-    This was initially reported as security issue (_thanks Harvey Spec_) but in the PocketBase context it is not something that can be exploited without an admin intervention and since the general expectations are that the PocketBase admins can do anything and they are the one who manage their server, this should be treated with the same diligence when using `scp`/`rsync`/`rclone`/etc. with untrusted file sources.
-
-    It is not possible (_or at least I'm not aware how to do that easily_) to perform virus/malicious content scanning on the uploaded backup archive files and some caution is always required when using the Admin UI or running shell commands, hence the backup-restore warning text.
-
-    **Or in other words, if someone sends you a file and tell you to upload it to your server (either as backup zip or manually via scp) obviously you shouldn't do that unless you really trust them.**
-
-    PocketBase is like any other regular application that you run on your server and there is no builtin "sandbox" for what the PocketBase process can execute. This is left to the developers to restrict on application or OS level depending on their needs. If you are self-hosting PocketBase you usually don't have to do that, but if you are offering PocketBase as a service and allow strangers to run their own PocketBase instances on your server then you'll need to implement the isolation mechanisms on your own.
-  </details>
-
-
-## v0.22.4
-
-- Removed conflicting styles causing the detailed codeblock log data preview to not visualize properly ([#4505](https://github.com/pocketbase/pocketbase/pull/4505)).
-
-- Minor JSVM improvements:
-  - Added `$filesystem.fileFromUrl(url, optSecTimeout)` helper.
-  - Implemented the `FormData` interface and added support for sending `multipart/form-data` requests with `$http.send()` ([#4544](https://github.com/pocketbase/pocketbase/discussions/4544)).
-
-
-## v0.22.3
-
-- Fixed the z-index of the current admin dropdown on Safari ([#4492](https://github.com/pocketbase/pocketbase/issues/4492)).
-
-- Fixed `OnAfterApiError` debug log `nil` error reference ([#4498](https://github.com/pocketbase/pocketbase/issues/4498)).
-
-- Added the field name as part of the `@request.data.someRelField.*` join to handle the case when a collection has 2 or more relation fields pointing to the same place ([#4500](https://github.com/pocketbase/pocketbase/issues/4500)).
-
-- Updated Go deps and bumped the min Go version in the GitHub release action to Go 1.22.1 since it comes with [some security fixes](https://github.com/golang/go/issues?q=milestone%3AGo1.22.1).
-
-
-## v0.22.2
-
-- Fixed a small regression introduced with v0.22.0 that was causing some missing unknown fields to always return an error instead of applying the specific `nullifyMisingField` resolver option to the query.
-
-
-## v0.22.1
-
-- Fixed Admin UI record and collection panels not reinitializing properly on browser back/forward navigation ([#4462](https://github.com/pocketbase/pocketbase/issues/4462)).
-
-- Initialize `RecordAuthWithOAuth2Event.IsNewRecord` for the `OnRecordBeforeAuthWithOAuth2Request` hook ([#4437](https://github.com/pocketbase/pocketbase/discussions/4437)).
-
-- Added error checks to the autogenerated Go migrations ([#4448](https://github.com/pocketbase/pocketbase/issues/4448)).
-
-
-## v0.22.0
-
-- Added Planning Center OAuth2 provider ([#4393](https://github.com/pocketbase/pocketbase/pull/4393); thanks @alxjsn).
-
-- Admin UI improvements:
-  - Autosync collection changes across multiple open browser tabs.
-  - Fixed vertical image popup preview scrolling.
-  - Added options to export a subset of collections.
-  - Added option to import a subset of collections without deleting the others ([#3403](https://github.com/pocketbase/pocketbase/issues/3403)).
-
-- Added support for back/indirect relation `filter`/`sort` (single and multiple).
-  The syntax to reference back relation fields is `yourCollection_via_yourRelField.*`.
-  ⚠️ To avoid excessive joins, the nested relations resolver is now limited to max 6 level depth (the same as `expand`).
-  _Note that in the future there will be also more advanced and granular options to specify a subset of the fields that are filterable/sortable._
-
-- Added support for multiple back/indirect relation `expand` and updated the keys to use the `_via_` reference syntax (`yourCollection_via_yourRelField`).
-  _To minimize the breaking changes, the old parenthesis reference syntax (`yourCollection(yourRelField)`) will still continue to work but it is soft-deprecated and there will be a console log reminding you to change it to the new one._
-
-- ⚠️ Collections and fields are no longer allowed to have `_via_` in their name to avoid collisions with the back/indirect relation reference syntax.
-
-- Added `jsvm.Config.OnInit` optional config function to allow registering custom Go bindings to the JSVM.
-
-- Added `@request.context` rule field that can be used to apply a different set of constraints based on the API rule execution context.
-  For example, to disallow user creation by an OAuth2 auth, you could set for the users Create API rule `@request.context != "oauth2"`.
-  The currently supported `@request.context` values are:
-  ```
-  default
-  realtime
-  protectedFile
-  oauth2
-  ```
-
-- Adjusted the `cron.Start()` to start the ticker at the `00` second of the cron interval ([#4394](https://github.com/pocketbase/pocketbase/discussions/4394)).
-  _Note that the cron format has only minute granularity and there is still no guarantee that the scheduled job will be always executed at the `00` second._
-
-- Fixed auto backups cron not reloading properly after app settings change ([#4431](https://github.com/pocketbase/pocketbase/discussions/4431)).
-
-- Upgraded to `aws-sdk-go-v2` and added special handling for GCS to workaround the previous [GCS headers signature issue](https://github.com/pocketbase/pocketbase/issues/2231) that we had with v2.
-  _This should also fix the SVG/JSON zero response when using Cloudflare R2 ([#4287](https://github.com/pocketbase/pocketbase/issues/4287#issuecomment-1925168142), [#2068](https://github.com/pocketbase/pocketbase/discussions/2068), [#2952](https://github.com/pocketbase/pocketbase/discussions/2952))._
-  _⚠️ If you are using S3 for uploaded files or backups, please verify that you have a green check in the Admin UI for your S3 configuration (I've tested the new version with GCS, MinIO, Cloudflare R2 and Wasabi)._
-
-- Added `:each` modifier support for `file` and `relation` type fields (_previously it was supported only for `select` type fields_).
-
-- Other minor improvements (updated the `ghupdate` plugin to use the configured executable name when printing to the console, fixed the error reporting of `admin update/delete` commands, etc.).
-
-
-## v0.21.3
-
-- Ignore the JS required validations for disabled OIDC providers ([#4322](https://github.com/pocketbase/pocketbase/issues/4322)).
-
-- Allow `HEAD` requests to the `/api/health` endpoint ([#4310](https://github.com/pocketbase/pocketbase/issues/4310)).
-
-- Fixed the `editor` field value when visualized inside the View collection preview panel.
-
-- Manually clear all TinyMCE events on editor removal (_workaround for [tinymce#9377](https://github.com/tinymce/tinymce/issues/9377)_).
-
-
-## v0.21.2
-
-- Fixed `@request.auth.*` initialization side-effect which caused the current authenticated user email to not being returned in the user auth response ([#2173](https://github.com/pocketbase/pocketbase/issues/2173#issuecomment-1932332038)).
-  _The current authenticated user email should be accessible always no matter of the `emailVisibility` state._
-
-- Fixed `RecordUpsert.RemoveFiles` godoc example.
-
-- Bumped to `NumCPU()+2` the `thumbGenSem` limit as some users reported that it was too restrictive.
-
-
-## v0.21.1
-
-- Small fix for the Admin UI related to the _Settings > Sync_ menu not being visible even when the "Hide controls" toggle is off.
-
-
-## v0.21.0
-
-- Added Bitbucket OAuth2 provider ([#3948](https://github.com/pocketbase/pocketbase/pull/3948); thanks @aabajyan).
-
-- Mark user as verified on confirm password reset ([#4066](https://github.com/pocketbase/pocketbase/issues/4066)).
-  _If the user email has changed after issuing the reset token (eg. updated by an admin), then the `verified` user state remains unchanged._
-
-- Added support for loading a serialized json payload for `multipart/form-data` requests using the special `@jsonPayload` key.
-  _This is intended to be used primarily by the SDKs to resolve [js-sdk#274](https://github.com/pocketbase/js-sdk/issues/274)._
-
-- Added graceful OAuth2 redirect error handling ([#4177](https://github.com/pocketbase/pocketbase/issues/4177)).
-  _Previously on redirect error we were returning directly a standard json error response. Now on redirect error we'll redirect to a generic OAuth2 failure screen (similar to the success one) and will attempt to auto close the OAuth2 popup._
-  _The SDKs are also updated to handle the OAuth2 redirect error and it will be returned as Promise rejection of the `authWithOAuth2()` call._
-
-- Exposed `$apis.gzip()` and `$apis.bodyLimit(bytes)` middlewares to the JSVM.
-
-- Added `TestMailer.SentMessages` field that holds all sent test app emails until cleanup.
-
-- Optimized the cascade delete of records with multiple `relation` fields.
-
-- Updated the `serve` and `admin` commands error reporting.
-
-- Minor Admin UI improvements (reduced the min table row height, added option to duplicate fields, added new TinyMCE codesample plugin languages, hide the collection sync settings when the `Settings.Meta.HideControls` is enabled, etc.)
-
-
-## v0.20.7
-
-- Fixed the Admin UI auto indexes update when renaming fields with a common prefix ([#4160](https://github.com/pocketbase/pocketbase/issues/4160)).
-
-
-## v0.20.6
-
-- Fixed JSVM types generation for functions with omitted arg types ([#4145](https://github.com/pocketbase/pocketbase/issues/4145)).
-
-- Updated Go deps.
-
-
-## v0.20.5
-
-- Minor CSS fix for the Admin UI to prevent the searchbar within a popup from expanding too much and pushing the controls out of the visible area ([#4079](https://github.com/pocketbase/pocketbase/issues/4079#issuecomment-1876994116)).
-
-
-## v0.20.4
-
-- Small fix for a regression introduced with the recent `json` field changes that was causing View collection column expressions recognized as `json` to fail to resolve ([#4072](https://github.com/pocketbase/pocketbase/issues/4072)).
-
-
-## v0.20.3
-
-- Fixed the `json` field query comparisons to work correctly with plain JSON values like `null`, `bool` `number`, etc. ([#4068](https://github.com/pocketbase/pocketbase/issues/4068)).
-  Since there are plans in the future to allow custom SQLite builds and also in some situations it may be useful to be able to distinguish `NULL` from `''`,
-  for the `json` fields (and for any other future non-standard field) we no longer apply `COALESCE` by default, aka.:
-  ```
-  Dataset:
-  1) data: json(null)
-  2) data: json('')
-
-  For the filter "data = null" only 1) will resolve to TRUE.
-  For the filter "data = ''"   only 2) will resolve to TRUE.
-  ```
-
-- Minor Go tests improvements
-  - Sorted the record cascade delete references to ensure that the delete operation will preserve the order of the fired events when running the tests.
-  - Marked some of the tests as safe for parallel execution to speed up a little the GitHub action build times.
-
-
-## v0.20.2
-
-- Added `sleep(milliseconds)` JSVM binding.
-  _It works the same way as Go `time.Sleep()`, aka. it pauses the goroutine where the JSVM code is running._
-
-- Fixed multi-line text paste in the Admin UI search bar ([#4022](https://github.com/pocketbase/pocketbase/discussions/4022)).
-
-- Fixed the monospace font loading in the Admin UI.
-
-- Fixed various reported docs and code comment typos.
-
-
-## v0.20.1
-
-- Added `--dev` flag and its accompanying `app.IsDev()` method (_in place of the previously removed `--debug`_) to assist during development ([#3918](https://github.com/pocketbase/pocketbase/discussions/3918)).
-  The `--dev` flag prints in the console "everything" and more specifically:
-  - the data DB SQL statements
-  - all `app.Logger().*` logs (debug, info, warning, error, etc.), no matter of the logs persistence settings in the Admin UI
-
-- Minor Admin UI fixes:
-  - Fixed the log `error` label text wrapping.
-  - Added the log `referer` (_when it is from a different source_) and `details` labels in the logs listing.
-  - Removed the blank current time entry from the logs chart because it was causing confusion when used with custom time ranges.
-  - Updated the SQL syntax highlighter and keywords autocompletion in the Admin UI to recognize `CAST(x as bool)` expressions.
-
-- Replaced the default API tests timeout with a new `ApiScenario.Timeout` option ([#3930](https://github.com/pocketbase/pocketbase/issues/3930)).
-  A negative or zero value means no tests timeout.
-  If a single API test takes more than 3s to complete it will have a log message visible when the test fails or when `go test -v` flag is used.
-
-- Added timestamp at the beginning of the generated JSVM types file to avoid creating it everytime with the app startup.
-
-
-## v0.20.0
-
-- Added `expand`, `filter`, `fields`, custom query and headers parameters support for the realtime subscriptions.
-    _Requires JS SDK v0.20.0+ or Dart SDK v0.17.0+._
-
-    ```js
-    // JS SDK v0.20.0
-    pb.collection("example").subscribe("*", (e) => {
-      ...
-    }, {
-      expand: "someRelField",
-      filter: "status = 'active'",
-      fields: "id,expand.someRelField.*:excerpt(100)",
-    })
-    ```
-
-    ```dart
-    // Dart SDK v0.17.0
-    pb.collection("example").subscribe("*", (e) {
+- ⚠️ Moved the Create and Manage API rule checks out of the `OnRecordCreateRequest` hook finalizer, **aka. now all CRUD API rules are checked BEFORE triggering their corresponding `*Request` hook**.
+    This was done to minimize the confusion regarding the firing order of the request operations, making it more predictable and consistent with the other record List/View/Update/Delete request actions.
+    It could be a minor breaking change if you are relying on the old behavior and have a Go `tests.ApiScenario` that is testing a Create API rule failure and expect `OnRecordCreateRequest` to be fired. In that case for example you may have to update your test scenario like:
+    ```go
+    tests.ApiScenario{
+        Name:   "Example test that checks a Create API rule failure"
+        Method: http.MethodPost,
+        URL:    "/api/collections/example/records",
         ...
-      },
-      expand: "someRelField",
-      filter: "status = 'active'",
-      fields: "id,expand.someRelField.*:excerpt(100)",
-    )
+        // old:
+        ExpectedEvents:  map[string]int{
+            "*":                     0,
+            "OnRecordCreateRequest": 1,
+        },
+        // new:
+        ExpectedEvents:  map[string]int{"*": 0},
+    }
     ```
+    If you are having difficulties adjusting your code, feel free to open a [Q&A discussion](https://github.com/pocketbase/pocketbase/discussions) with the failing/problematic code sample.
 
-- Generalized the logs to allow any kind of application logs, not just requests.
+- Added [new `geoPoint` field](https://pocketbase.io/docs/collections/#geopoint) for storing `{"lon":x,"lat":y}` geographic coordinates.
+    In addition, a new [`geoDistance(lonA, lotA, lonB, lotB)` function](htts://pocketbase.io/docs/api-rules-and-filters/#geodistancelona-lata-lonb-latb) was also implemented that could be used to apply an API rule or filter constraint based on the distance (in km) between 2 geo points.
 
-    The new `app.Logger()` implements the standard [`log/slog` interfaces](https://pkg.go.dev/log/slog) available with Go 1.21.
-    ```
-    // Go: https://pocketbase.io/docs/go-logging/
-    app.Logger().Info("Example message", "total", 123, "details", "lorem ipsum...")
+- Updated the `select` field UI to accommodate better larger lists and RTL languages ([#4674](https://github.com/pocketbase/pocketbase/issues/4674)).
 
-    // JS: https://pocketbase.io/docs/js-logging/
-    $app.logger().info("Example message", "total", 123, "details", "lorem ipsum...")
-    ```
+- Updated the mail attachments auto MIME type detection to use `gabriel-vasile/mimetype` for consistency and broader sniffing signatures support.
 
-    For better performance and to minimize blocking on hot paths, logs are currently written with
-    debounce and on batches:
-    - 3 seconds after the last debounced log write
-    - when the batch threshold is reached (currently 200)
-    - right before app termination to attempt saving everything from the existing logs queue
+- Forced `text/javascript` Content-Type when serving `.js`/`.mjs` collection uploaded files with the `/api/files/...` endpoint ([#6597](https://github.com/pocketbase/pocketbase/issues/6597)).
 
-    Some notable log related changes:
-
-    - ⚠️ Bumped the minimum required Go version to 1.21.
-
-    - ⚠️ Removed `_requests` table in favor of the generalized `_logs`.
-      _Note that existing logs will be deleted!_
-
-    - ⚠️ Renamed the following `Dao` log methods:
-      ```go
-      Dao.RequestQuery(...)      -> Dao.LogQuery(...)
-      Dao.FindRequestById(...)   -> Dao.FindLogById(...)
-      Dao.RequestsStats(...)     -> Dao.LogsStats(...)
-      Dao.DeleteOldRequests(...) -> Dao.DeleteOldLogs(...)
-      Dao.SaveRequest(...)       -> Dao.SaveLog(...)
-      ```
-    - ⚠️ Removed `app.IsDebug()` and the `--debug` flag.
-      This was done to avoid the confusion with the new logger and its debug severity level.
-      If you want to store debug logs you can set `-4` as min log level from the Admin UI.
-
-    - Refactored Admin UI Logs:
-      - Added new logs table listing.
-      - Added log settings option to toggle the IP logging for the activity logger.
-      - Added log settings option to specify a minimum log level.
-      - Added controls to export individual or bulk selected logs as json.
-      - Other minor improvements and fixes.
-
-- Added new `filesystem/System.Copy(src, dest)` method to copy existing files from one location to another.
-  _This is usually useful when duplicating records with `file` field(s) programmatically._
-
-- Added `filesystem.NewFileFromUrl(ctx, url)` helper method to construct a `*filesystem.BytesReader` file from the specified url.
-
-- OAuth2 related additions:
-
-    - Added new `PKCE()` and `SetPKCE(enable)` OAuth2 methods to indicate whether the PKCE flow is supported or not.
-      _The PKCE value is currently configurable from the UI only for the OIDC providers._
-      _This was added to accommodate OIDC providers that may throw an error if unsupported PKCE params are submitted with the auth request (eg. LinkedIn; see [#3799](https://github.com/pocketbase/pocketbase/discussions/3799#discussioncomment-7640312))._
-
-    - Added new `displayName` field for each `listAuthMethods()` OAuth2 provider item.
-      _The value of the `displayName` property is currently configurable from the UI only for the OIDC providers._
-
-    - Added `expiry` field to the OAuth2 user response containing the _optional_ expiration time of the OAuth2 access token ([#3617](https://github.com/pocketbase/pocketbase/discussions/3617)).
-
-    - Allow a single OAuth2 user to be used for authentication in multiple auth collection.
-      _⚠️ Because now you can have more than one external provider with `collectionId-provider-providerId` pair, `Dao.FindExternalAuthByProvider(provider, providerId)` method was removed in favour of the more generic `Dao.FindFirstExternalAuthByExpr(expr)`._
-
-- Added `onlyVerified` auth collection option to globally disallow authentication requests for unverified users.
-
-- Added support for single line comments (ex. `// your comment`) in the API rules and filter expressions.
-
-- Added support for specifying a collection alias in `@collection.someCollection:alias.*`.
-
-- Soft-deprecated and renamed `app.Cache()` with `app.Store()`.
-
-- Minor JSVM updates and fixes:
-
-    - Updated `$security.parseUnverifiedJWT(token)` and `$security.parseJWT(token, key)` to return the token payload result as plain object.
-
-    - Added `$apis.requireGuestOnly()` middleware JSVM binding ([#3896](https://github.com/pocketbase/pocketbase/issues/3896)).
-
-- Use `IS NOT` instead of `!=` as not-equal SQL query operator to handle the cases when comparing with nullable columns or expressions (eg. `json_extract` over `json` field).
-  _Based on my local dataset I wasn't able to find a significant difference in the performance between the 2 operators, but if you stumble on a query that you think may be affected negatively by this, please report it and I'll test it further._
-
-- Added `MaxSize` `json` field option to prevent storing large json data in the db ([#3790](https://github.com/pocketbase/pocketbase/issues/3790)).
-  _Existing `json` fields are updated with a system migration to have a ~2MB size limit (it can be adjusted from the Admin UI)._
-
-- Fixed negative string number normalization support for the `json` field type.
-
-- Trigger the `app.OnTerminate()` hook on `app.Restart()` call.
-  _A new bool `IsRestart` field was also added to the `core.TerminateEvent` event._
-
-- Fixed graceful shutdown handling and speed up a little the app termination time.
-
-- Limit the concurrent thumbs generation to avoid high CPU and memory usage in spiky scenarios ([#3794](https://github.com/pocketbase/pocketbase/pull/3794); thanks @t-muehlberger).
-  _Currently the max concurrent thumbs generation processes are limited to "total of logical process CPUs + 1"._
-  _This is arbitrary chosen and may change in the future depending on the users feedback and usage patterns._
-  _If you are experiencing OOM errors during large image thumb generations, especially in container environment, you can try defining the `GOMEMLIMIT=500MiB` env variable before starting the executable._
-
-- Slightly speed up (~10%) the thumbs generation by changing from cubic (`CatmullRom`) to bilinear (`Linear`) resampling filter (_the quality difference is very little_).
-
-- Added a default red colored Stderr output in case of a console command error.
-  _You can now also silence individually custom commands errors using the `cobra.Command.SilenceErrors` field._
-
-- Fixed links formatting in the autogenerated html->text mail body.
-
-- Removed incorrectly imported empty `local('')` font-face declarations.
-
-
-## v0.19.4
-
-- Fixed TinyMCE source code viewer textarea styles ([#3715](https://github.com/pocketbase/pocketbase/issues/3715)).
-
-- Fixed `text` field min/max validators to properly count multi-byte characters ([#3735](https://github.com/pocketbase/pocketbase/issues/3735)).
-
-- Allowed hyphens in `username` ([#3697](https://github.com/pocketbase/pocketbase/issues/3697)).
-  _More control over the system fields settings will be available in the future._
-
-- Updated the JSVM generated types to use directly the value type instead of `* | undefined` union in functions/methods return declarations.
-
-
-## v0.19.3
-
-- Added the release notes to the console output of `./pocketbase update` ([#3685](https://github.com/pocketbase/pocketbase/discussions/3685)).
-
-- Added missing documentation for the JSVM `$mails.*` bindings.
-
-- Relaxed the OAuth2 redirect url validation to allow any string value ([#3689](https://github.com/pocketbase/pocketbase/pull/3689); thanks @sergeypdev).
-  _Note that the redirect url format is still bound to the accepted values by the specific OAuth2 provider._
-
-
-## v0.19.2
-
-- Updated the JSVM generated types ([#3627](https://github.com/pocketbase/pocketbase/issues/3627), [#3662](https://github.com/pocketbase/pocketbase/issues/3662)).
-
-
-## v0.19.1
-
-- Fixed `tokenizer.Scan()/ScanAll()` to ignore the separators from the default trim cutset.
-  An option to return also the empty found tokens was also added via `Tokenizer.KeepEmptyTokens(true)`.
-  _This should fix the parsing of whitespace characters around view query column names when no quotes are used ([#3616](https://github.com/pocketbase/pocketbase/discussions/3616#discussioncomment-7398564))._
-
-- Fixed the `:excerpt(max, withEllipsis?)` `fields` query param modifier to properly add space to the generated text fragment after block tags.
-
-
-## v0.19.0
-
-- Added Patreon OAuth2 provider ([#3323](https://github.com/pocketbase/pocketbase/pull/3323); thanks @ghostdevv).
-
-- Added mailcow OAuth2 provider ([#3364](https://github.com/pocketbase/pocketbase/pull/3364); thanks @thisni1s).
-
-- Added support for `:excerpt(max, withEllipsis?)` `fields` modifier that will return a short plain text version of any string value (html tags are stripped).
-    This could be used to minimize the downloaded json data when listing records with large `editor` html values.
+- Added second optional JSVM `DateTime` constructor argument for specifying a default timezone as TZ identifier when parsing the date string as alternative to a fixed offset in order to better handle daylight saving time nuances ([#6688](https://github.com/pocketbase/pocketbase/discussions/6688)):
     ```js
-    await pb.collection("example").getList(1, 20, {
-      "fields": "*,description:excerpt(100)"
-    })
+    // the same as with CET offset: new DateTime("2025-10-26 03:00:00 +01:00")
+    new DateTime("2025-10-26 03:00:00", "Europe/Amsterdam") // 2025-10-26 02:00:00.000Z
+
+    // the same as with CEST offset: new DateTime("2025-10-26 01:00:00 +02:00")
+    new DateTime("2025-10-26 01:00:00", "Europe/Amsterdam") // 2025-10-25 23:00:00.000Z
     ```
 
-- Several Admin UI improvements:
-  - Count the total records separately to speed up the query execution for large datasets ([#3344](https://github.com/pocketbase/pocketbase/issues/3344)).
-  - Enclosed the listing scrolling area within the table so that the horizontal scrollbar and table header are always reachable ([#2505](https://github.com/pocketbase/pocketbase/issues/2505)).
-  - Allowed opening the record preview/update form via direct URL ([#2682](https://github.com/pocketbase/pocketbase/discussions/2682)).
-  - Reintroduced the local `date` field tooltip on hover.
-  - Speed up the listing loading times for records with large `editor` field values by initially fetching only a partial of the records data (the complete record data is loaded on record preview/update).
-  - Added "Media library" (collection images picker) support for the TinyMCE `editor` field.
-  - Added support to "pin" collections in the sidebar.
-  - Added support to manually resize the collections sidebar.
-  - More clear "Nonempty" field label style.
-  - Removed the legacy `.woff` and `.ttf` fonts and keep only `.woff2`.
+- Soft-deprecated the `$http.send`'s `result.raw` field in favor of `result.body` that contains the response body as plain bytes slice to avoid the discrepancies between Go and the JSVM when casting binary data to string.
 
-- Removed the explicit `Content-Type` charset from the realtime response due to compatibility issues with IIS ([#3461](https://github.com/pocketbase/pocketbase/issues/3461)).
-  _The `Connection:keep-alive` realtime response header was also removed as it is not really used with HTTP2 anyway._
+- Updated `modernc.org/sqlite` to 1.37.0.
 
-- Added new JSVM bindings:
-  - `new Cookie({ ... })` constructor for creating `*http.Cookie` equivalent value.
-  - `new SubscriptionMessage({ ... })` constructor for creating a custom realtime subscription payload.
-  - Soft-deprecated `$os.exec()` in favour of `$os.cmd()` to make it more clear that the call only prepares the command and doesn't execute it.
+- Other minor improvements (_removed the superuser fields from the auth record create/update body examples, allowed programmatically updating the auth record password from the create/update hooks, fixed collections import error response, etc._).
 
-- ⚠️ Bumped the min required Go version to 1.19.
 
+## v0.26.6
 
-## v0.18.10
+- Allow OIDC `email_verified` to be int or boolean string since some OIDC providers like AWS Cognito has non-standard userinfo response ([#6657](https://github.com/pocketbase/pocketbase/pull/6657)).
 
-- Added global `raw` template function to allow outputting raw/verbatim HTML content in the JSVM templates ([#3476](https://github.com/pocketbase/pocketbase/discussions/3476)).
-  ```
-  {{.description|raw}}
-  ```
+- Updated `modernc.org/sqlite` to 1.36.3.
 
-- Trimmed view query semicolon and allowed single quotes for column aliases ([#3450](https://github.com/pocketbase/pocketbase/issues/3450#issuecomment-1748044641)).
-  _Single quotes are usually [not a valid identifier quote characters](https://www.sqlite.org/lang_keywords.html), but for resilience and compatibility reasons SQLite allows them in some contexts where only an identifier is expected._
 
-- Bumped the GitHub action to use [min Go 1.21.2](https://github.com/golang/go/issues?q=milestone%3AGo1.21.2) (_the fixed issues are not critical as they are mostly related to the compiler/build tools_).
+## v0.26.5
 
+- Fixed canonical URI parts escaping when generating the S3 request signature ([#6654](https://github.com/pocketbase/pocketbase/issues/6654)).
 
-## v0.18.9
 
-- Fixed empty thumbs directories not getting deleted on Windows after deleting a record img file ([#3382](https://github.com/pocketbase/pocketbase/issues/3382)).
+## v0.26.4
 
-- Updated the generated JSVM typings to silent the TS warnings when trying to access a field/method in a Go->TS interface.
+- Fixed `RecordErrorEvent.Error` and `CollectionErrorEvent.Error` sync with `ModelErrorEvent.Error` ([#6639](https://github.com/pocketbase/pocketbase/issues/6639)).
 
+- Fixed logs details copy to clipboard action.
 
-## v0.18.8
+- Updated `modernc.org/sqlite` to 1.36.2.
 
-- Minor fix for the View collections API Preview and Admin UI listings incorrectly showing the `created` and `updated` fields as `N/A` when the view query doesn't have them.
 
+## v0.26.3
 
-## v0.18.7
+- Fixed and normalized logs error serialization across common types for more consistent logs error output ([#6631](https://github.com/pocketbase/pocketbase/issues/6631)).
 
-- Fixed JS error in the Admin UI when listing records with invalid `relation` field value ([#3372](https://github.com/pocketbase/pocketbase/issues/3372)).
-  _This could happen usually only during custom SQL import scripts or when directly modifying the record field value without data validations._
 
-- Updated Go deps and the generated JSVM types.
+## v0.26.2
 
+- Updated `golang-jwt/jwt` dependency because it comes with a [minor security fix](https://github.com/golang-jwt/jwt/security/advisories/GHSA-mh63-6h87-95cp).
 
-## v0.18.6
 
-- Return the response headers and cookies in the `$http.send()` result ([#3310](https://github.com/pocketbase/pocketbase/discussions/3310)).
+## v0.26.1
 
-- Added more descriptive internal error message for missing user/admin email on password reset requests.
+- Removed the wrapping of `io.EOF` error when reading files since currently `io.ReadAll` doesn't check for wrapped errors ([#6600](https://github.com/pocketbase/pocketbase/issues/6600)).
 
-- Updated Go deps.
 
+## v0.26.0
 
-## v0.18.5
+- ⚠️ Replaced `aws-sdk-go-v2` and `gocloud.dev/blob` with custom lighter implementation ([#6562](https://github.com/pocketbase/pocketbase/discussions/6562)).
+    As a side-effect of the dependency removal, the binary size has been reduced with ~10MB and builds ~30% faster.
+    _Although the change is expected to be backward-compatible, I'd recommend to test first locally the new version with your S3 provider (if you use S3 for files storage and backups)._
 
-- Fixed minor Admin UI JS error in the auth collection options panel introduced with the change from v0.18.4.
+- ⚠️ Prioritized the user submitted non-empty `createData.email` (_it will be unverified_) when creating the PocketBase user during the first OAuth2 auth.
 
+- Load the request info context during password/OAuth2/OTP authentication ([#6402](https://github.com/pocketbase/pocketbase/issues/6402)).
+    This could be useful in case you want to target the auth method as part of the MFA and Auth API rules.
+    For example, to disable MFA for the OAuth2 auth could be expressed as `@request.context != "oauth2"` MFA rule.
 
-## v0.18.4
+- Added `store.Store.SetFunc(key, func(old T) new T)` to set/update a store value with the return result of the callback in a concurrent safe manner.
 
-- Added escape character (`\`) support in the Admin UI to allow using `select` field values with comma ([#2197](https://github.com/pocketbase/pocketbase/discussions/2197)).
+- Added `subscription.Message.WriteSSE(w, id)` for writing an SSE formatted message into the provided writer interface (_used mostly to assist with the unit testing_).
 
+- Added `$os.stat(file)` JSVM helper ([#6407](https://github.com/pocketbase/pocketbase/discussions/6407)).
 
-## v0.18.3
+- Added log warning for `async` marked JSVM handlers and resolve when possible the returned `Promise` as fallback ([#6476](https://github.com/pocketbase/pocketbase/issues/6476)).
 
-- Exposed a global JSVM `readerToString(reader)` helper function to allow reading Go `io.Reader` values ([#3273](https://github.com/pocketbase/pocketbase/discussions/3273)).
+- Allowed calling `cronAdd`, `cronRemove` from inside other JSVM handlers ([#6481](https://github.com/pocketbase/pocketbase/discussions/6481)).
 
-- Bumped the GitHub action to use [min Go 1.21.1](https://github.com/golang/go/issues?q=milestone%3AGo1.21.1+label%3ACherryPickApproved) for the prebuilt executable since it contains some minor `html/template` and `net/http` security fixes.
+- Bumped the default request read and write timeouts to 5mins (_old 3mins_) to accommodate slower internet connections and larger file uploads/downloads.
+    _If you want to change them you can modify the `OnServe` hook's `ServeEvent.ReadTimeout/WriteTimeout` fields as shown in [#6550](https://github.com/pocketbase/pocketbase/discussions/6550#discussioncomment-12364515)._
 
+- Normalized the `@request.auth.*` and `@request.body.*` back relations resolver to always return `null` when the relation field is pointing to a different collection ([#6590](https://github.com/pocketbase/pocketbase/discussions/6590#discussioncomment-12496581)).
 
-## v0.18.2
+- Other minor improvements (_fixed query dev log nested parameters output, reintroduced `DynamicModel` object/array props reflect types caching, updated Go and npm deps, etc._)
 
-- Prevent breaking the record form in the Admin UI in case the browser's localStorage quota has been exceeded when uploading or storing large `editor` values ([#3265](https://github.com/pocketbase/pocketbase/issues/3265)).
 
-- Updated docs and missing JSVM typings.
+## v0.25.9
 
-- Exposed additional crypto primitives under the `$security.*` JSVM namespace ([#3273](https://github.com/pocketbase/pocketbase/discussions/3273)):
-  ```js
-  // HMAC with SHA256
-  $security.hs256("hello", "secret")
+- Fixed `DynamicModel` object/array props reflect type caching ([#6563](https://github.com/pocketbase/pocketbase/discussions/6563)).
 
-  // HMAC with SHA512
-  $security.hs512("hello", "secret")
 
-  // compare 2 strings with a constant time
-  $security.equal(hash1, hash2)
-  ```
+## v0.25.8
 
+- Added a default leeway of 5 minutes for the Apple/OIDC `id_token` timestamp claims check to account for clock-skew ([#6529](https://github.com/pocketbase/pocketbase/issues/6529)).
+    It can be further customized if needed with the `PB_ID_TOKEN_LEEWAY` env variable (_the value must be in seconds, e.g. "PB_ID_TOKEN_LEEWAY=60" for 1 minute_).
 
-## v0.18.1
 
-- Excluded the local temp dir from the backups ([#3261](https://github.com/pocketbase/pocketbase/issues/3261)).
+## v0.25.7
 
+- Fixed `@request.body.jsonObjOrArr.*` values extraction ([#6493](https://github.com/pocketbase/pocketbase/discussions/6493)).
 
-## v0.18.0
 
-- Simplified the `serve` command to accept domain name(s) as argument to reduce any additional manual hosts setup that sometimes previously was needed when deploying on production ([#3190](https://github.com/pocketbase/pocketbase/discussions/3190)).
-  ```sh
-  ./pocketbase serve yourdomain.com
-  ```
+## v0.25.6
 
-- Added `fields` wildcard (`*`) support.
+- Restore the missing `meta.isNew` field of the OAuth2 success response ([#6490](https://github.com/pocketbase/pocketbase/issues/6490)).
 
-- Added option to upload a backup file from the Admin UI ([#2599](https://github.com/pocketbase/pocketbase/issues/2599)).
+- Updated npm dependencies.
 
-- Registered a custom Deflate compressor to speedup (_nearly 2-3x_) the backups generation for the sake of a small zip size increase.
-  _Based on several local tests, `pb_data` of ~500MB (from which ~350MB+ are several hundred small files) results in a ~280MB zip generated for ~11s (previously it resulted in ~250MB zip but for ~35s)._
 
-- Added the application name as part of the autogenerated backup name for easier identification ([#3066](https://github.com/pocketbase/pocketbase/issues/3066)).
+## v0.25.5
 
-- Added new `SmtpConfig.LocalName` option to specify a custom domain name (or IP address) for the initial EHLO/HELO exchange ([#3097](https://github.com/pocketbase/pocketbase/discussions/3097)).
-  _This is usually required for verification purposes only by some SMTP providers, such as on-premise [Gmail SMTP-relay](https://support.google.com/a/answer/2956491)._
+- Set the current working directory as a default goja script path when executing inline JS strings to allow `require(m)` traversing parent `node_modules` directories.
 
-- Added `NoDecimal` `number` field option.
+- Updated `modernc.org/sqlite` and `modernc.org/libc` dependencies.
 
-- `editor` field improvements:
-    - Added new "Strip urls domain" option to allow controlling the default TinyMCE urls behavior (_default to `false` for new content_).
-    - Normalized pasted text while still preserving links, lists, tables, etc. formatting ([#3257](https://github.com/pocketbase/pocketbase/issues/3257)).
 
-- Added option to auto generate admin and auth record passwords from the Admin UI.
+## v0.25.4
 
-- Added JSON validation and syntax highlight for the `json` field in the Admin UI ([#3191](https://github.com/pocketbase/pocketbase/issues/3191)).
+- Downgraded `aws-sdk-go-v2` to the version before the default data integrity checks because there have been reports for non-AWS S3 providers in addition to Backblaze (IDrive, R2) that no longer or partially work with the latest AWS SDK changes.
 
-- Added datetime filter macros:
-  ```
-  // all macros are UTC based
-  @second     - @now second number (0-59)
-  @minute     - @now minute number (0-59)
-  @hour       - @now hour number (0-23)
-  @weekday    - @now weekday number (0-6)
-  @day        - @now day number
-  @month      - @now month number
-  @year       - @now year number
-  @todayStart - beginning of the current day as datetime string
-  @todayEnd   - end of the current day as datetime string
-  @monthStart - beginning of the current month as datetime string
-  @monthEnd   - end of the current month as datetime string
-  @yearStart  - beginning of the current year as datetime string
-  @yearEnd    - end of the current year as datetime string
-  ```
+    While we try to enforce `when_required` by default, it is not enough to disable the new AWS SDK integrity checks entirely and some providers will require additional manual adjustments to make them compatible with the latest AWS SDK (e.g. removing the `x-aws-checksum-*` headers, unsetting the checksums calculation or reinstantiating the old MD5 checksums for some of the required operations, etc.) which as a result leads to a configuration mess that I'm not sure it would be a good idea to introduce.
 
-- Added cron expression macros ([#3132](https://github.com/pocketbase/pocketbase/issues/3132)):
-  ```
-  @yearly   - "0 0 1 1 *"
-  @annually - "0 0 1 1 *"
-  @monthly  - "0 0 1 * *"
-  @weekly   - "0 0 * * 0"
-  @daily    - "0 0 * * *"
-  @midnight - "0 0 * * *"
-  @hourly   - "0 * * * *"
-  ```
+    This unfornuatelly is not a PocketBase or Go specific issue and the official AWS SDKs for other languages are in the same situation (even the latest aws-cli).
 
-- ⚠️ Added offset argument `Dao.FindRecordsByFilter(collection, filter, sort, limit, offset, [params...])`.
-  _If you don't need an offset, you can set it to `0`._
+    For those of you that extend PocketBase with Go: if your S3 vendor doesn't support the [AWS Data integrity checks](https://docs.aws.amazon.com/sdkref/latest/guide/feature-dataintegrity.html) and you are updating with `go get -u`, then make sure that the `aws-sdk-go-v2` dependencies in your `go.mod` are the same as in the repo:
+    ```
+    // go.mod
+    github.com/aws/aws-sdk-go-v2 v1.36.1
+    github.com/aws/aws-sdk-go-v2/config v1.28.10
+    github.com/aws/aws-sdk-go-v2/credentials v1.17.51
+    github.com/aws/aws-sdk-go-v2/feature/s3/manager v1.17.48
+    github.com/aws/aws-sdk-go-v2/service/s3 v1.72.2
 
-- To minimize the footguns with `Dao.FindFirstRecordByFilter()` and `Dao.FindRecordsByFilter()`, the functions now supports an optional placeholder params argument that is safe to be populated with untrusted user input.
-  The placeholders are in the same format as when binding regular SQL parameters.
-  ```go
-  // unsanitized and untrusted filter variables
-  status := "..."
-  author := "..."
+    // after that run
+    go clean -modcache && go mod tidy
+    ```
+    _The versions pinning is temporary until the non-AWS S3 vendors patch their implementation or until I manage to find time to remove/replace the `aws-sdk-go-v2` dependency (I'll consider prioritizing it for the v0.26 or v0.27 release)._
 
-  app.Dao().FindFirstRecordByFilter("articles", "status={:status} && author={:author}", dbx.Params{
-    "status": status,
-    "author": author,
-  })
 
-  app.Dao().FindRecordsByFilter("articles", "status={:status} && author={:author}", "-created", 10, 0, dbx.Params{
-    "status": status,
-    "author": author,
-  })
-  ```
+## v0.25.3
 
-- Added JSVM `$mails.*` binds for the corresponding Go [mails package](https://pkg.go.dev/github.com/pocketbase/pocketbase/mails) functions.
+- Added a temporary exception for Backblaze S3 endpoints to exclude the new `aws-sdk-go-v2` checksum headers ([#6440](https://github.com/pocketbase/pocketbase/discussions/6440)).
 
-- Added JSVM helper crypto primitives under the `$security.*` namespace:
-  ```js
-  $security.md5(text)
-  $security.sha256(text)
-  $security.sha512(text)
-  ```
 
-- ⚠️ Deprecated `RelationOptions.DisplayFields` in favor of the new `SchemaField.Presentable` option to avoid the duplication when a single collection is referenced more than once and/or by multiple other collections.
+## v0.25.2
 
-- ⚠️ Fill the `LastVerificationSentAt` and `LastResetSentAt` fields only after a successfull email send ([#3121](https://github.com/pocketbase/pocketbase/issues/3121)).
+- Fixed realtime delete event not being fired for `RecordProxy`-ies and added basic realtime record resolve automated tests ([#6433](https://github.com/pocketbase/pocketbase/issues/6433)).
 
-- ⚠️ Skip API `fields` json transformations for non 20x responses ([#3176](https://github.com/pocketbase/pocketbase/issues/3176)).
 
-- ⚠️ Changes to `tests.ApiScenario` struct:
+## v0.25.1
 
-    - The `ApiScenario.AfterTestFunc` now receive as 3rd argument `*http.Response` pointer instead of `*echo.Echo` as the latter is not really useful in this context.
-      ```go
-      // old
-      AfterTestFunc: func(t *testing.T, app *tests.TestApp, e *echo.Echo)
+- Fixed the batch API Preview success sample response.
 
-      // new
-      AfterTestFunc: func(t *testing.T, app *tests.TestApp, res *http.Response)
-      ```
+- Bumped GitHub action min Go version to 1.23.6 as it comes with a [minor security fix](https://github.com/golang/go/issues?q=milestone%3AGo1.23.6+label%3ACherryPickApproved) for the ppc64le build.
 
-    - The `ApiScenario.TestAppFactory` now accept the test instance as argument and no longer expect an error as return result ([#3025](https://github.com/pocketbase/pocketbase/discussions/3025#discussioncomment-6592272)).
-      ```go
-      // old
-      TestAppFactory: func() (*tests.TestApp, error)
 
-      // new
-      TestAppFactory: func(t *testing.T) *tests.TestApp
-      ```
-      _Returning a `nil` app instance from the factory results in test failure. You can enforce a custom test failure by calling `t.Fatal(err)` inside the factory._
+## v0.25.0
 
-- Bumped the min required TLS version to 1.2 in order to improve the cert reputation score.
+- ⚠️ Upgraded Google OAuth2 auth, token and userinfo endpoints to their latest versions.
+    _For users that don't do anything custom with the Google OAuth2 data or the OAuth2 auth URL, this should be a non-breaking change. The exceptions that I could find are:_
+    - `/v3/userinfo` auth response changes:
+        ```
+        meta.rawUser.id             => meta.rawUser.sub
+        meta.rawUser.verified_email => meta.rawUser.email_verified
+        ```
+    - `/v2/auth` query parameters changes:
+        If you are specifying custom `approval_prompt=force` query parameter for the OAuth2 auth URL, you'll have to replace it with **`prompt=consent`**.
 
-- Reduced the default JSVM prewarmed pool size to 25 to reduce the initial memory consumptions (_you can manually adjust the pool size with `--hooksPool=50` if you need to, but the default should suffice for most cases_).
+- Added Trakt OAuth2 provider ([#6338](https://github.com/pocketbase/pocketbase/pull/6338); thanks @aidan-)
 
-- Update `gocloud.dev` dependency to v0.34 and explicitly set the new `NoTempDir` fileblob option to prevent the cross-device link error introduced with v0.33.
+- Added support for case-insensitive password auth based on the related UNIQUE index field collation ([#6337](https://github.com/pocketbase/pocketbase/discussions/6337)).
 
-- Other minor Admin UI and docs improvements.
+- Enforced `when_required` for the new AWS SDK request and response checksum validations to allow other non-AWS vendors to catch up with new AWS SDK changes (see [#6313](https://github.com/pocketbase/pocketbase/discussions/6313) and [aws/aws-sdk-go-v2#2960](https://github.com/aws/aws-sdk-go-v2/discussions/2960)).
+    _You can set the environment variables `AWS_REQUEST_CHECKSUM_CALCULATION` and `AWS_RESPONSE_CHECKSUM_VALIDATION` to `when_supported` if your S3 vendor supports the [new default integrity protections](https://docs.aws.amazon.com/sdkref/latest/guide/feature-dataintegrity.html)._
 
+- Soft-deprecated `Record.GetUploadedFiles` in favor of `Record.GetUnsavedFiles` to minimize the ambiguities what the method do ([#6269](https://github.com/pocketbase/pocketbase/discussions/6269)).
 
-## v0.17.7
+- Replaced archived `github.com/AlecAivazis/survey` dependency with a simpler  `osutils.YesNoPrompt(message, fallback)` helper.
 
-- Fixed the autogenerated `down` migrations to properly revert the old collection rules in case a change was made in `up` ([#3192](https://github.com/pocketbase/pocketbase/pull/3192); thanks @impact-merlinmarek).
-  _Existing `down` migrations can't be fixed but that should be ok as usually the `down` migrations are rarely used against prod environments since they can cause data loss and, while not ideal, the previous old behavior of always setting the rules to `null/nil` is safer than not updating the rules at all._
+- Upgraded to `golang-jwt/jwt/v5`.
 
-- Updated some Go deps.
+- Added JSVM `new Timezone(name)` binding for constructing `time.Location` value ([#6219](https://github.com/pocketbase/pocketbase/discussions/6219)).
 
+- Added `inflector.Camelize(str)` and `inflector.Singularize(str)` helper methods.
 
-## v0.17.6
+- Use the non-transactional app instance during the realtime records delete access checks to ensure that cascade deleted records with API rules relying on the parent will be resolved.
 
-- Fixed JSVM `require()` file path error when using Windows-style path delimiters ([#3163](https://github.com/pocketbase/pocketbase/issues/3163#issuecomment-1685034438)).
+- Other minor improvements (_replaced all `bool` exists db scans with `int` for broader drivers compatibility, updated API Preview sample error responses, updated UI dependencies, etc._)
 
 
-## v0.17.5
+## v0.24.4
 
-- Added quotes around the wrapped view query columns introduced with v0.17.4.
+- Fixed fields extraction for view query with nested comments ([#6309](https://github.com/pocketbase/pocketbase/discussions/6309)).
 
+- Bumped GitHub action min Go version to 1.23.5 as it comes with some [minor security fixes](https://github.com/golang/go/issues?q=milestone%3AGo1.23.5).
 
-## v0.17.4
 
-- Fixed Views record retrieval when numeric id is used ([#3110](https://github.com/pocketbase/pocketbase/issues/3110)).
-  _With this fix we also now properly recognize `CAST(... as TEXT)` and `CAST(... as BOOLEAN)` as `text` and `bool` fields._
+## v0.24.3
 
-- Fixed `relation` "Cascade delete" tooltip message ([#3098](https://github.com/pocketbase/pocketbase/issues/3098)).
+- Fixed incorrectly reported unique validator error for fields starting with name of another field ([#6281](https://github.com/pocketbase/pocketbase/pull/6281); thanks @svobol13).
 
-- Fixed jsvm error message prefix on failed migrations ([#3103](https://github.com/pocketbase/pocketbase/pull/3103); thanks @nzhenev).
+- Reload the created/edited records data in the RecordsPicker UI.
 
-- Disabled the initial Admin UI admins counter cache when there are no initial admins to allow detecting externally created accounts (eg. with the `admin` command) ([#3106](https://github.com/pocketbase/pocketbase/issues/3106)).
+- Updated Go dependencies.
 
-- Downgraded `google/go-cloud` dependency to v0.32.0 until v0.34.0 is released to prevent the `os.TempDir` `cross-device link` errors as too many users complained about it.
 
+## v0.24.2
 
-## v0.17.3
+- Fixed display fields extraction when there are multiple "Presentable" `relation` fields in a single related collection ([#6229](https://github.com/pocketbase/pocketbase/issues/6229)).
 
-- Fixed Docker `cross-device link` error when creating `pb_data` backups on a local mounted volume ([#3089](https://github.com/pocketbase/pocketbase/issues/3089)).
 
-- Fixed the error messages for relation to views ([#3090](https://github.com/pocketbase/pocketbase/issues/3090)).
+## v0.24.1
 
-- Always reserve space for the scrollbar to reduce the layout shifts in the Admin UI records listing due to the deprecated `overflow: overlay`.
+- Added missing time macros in the UI autocomplete.
 
-- Enabled lazy loading for the Admin UI thumb images.
+- Fixed JSVM types for structs and functions with multiple generic parameters.
 
 
-## v0.17.2
+## v0.24.0
 
-- Soft-deprecated `$http.send({ data: object, ... })` in favour of `$http.send({ body: rawString, ... })`
-  to allow sending non-JSON body with the request ([#3058](https://github.com/pocketbase/pocketbase/discussions/3058)).
-  The existing `data` prop will still work, but it is recommended to use `body` instead (_to send JSON you can use `JSON.stringify(...)` as body value_).
+- ⚠️ Removed the "dry submit" when executing the collections Create API rule
+    (you can find more details why this change was introduced and how it could affect your app in https://github.com/pocketbase/pocketbase/discussions/6073).
+    For most users it should be non-breaking change, BUT if you have Create API rules that uses self-references or view counters you may have to adjust them manually.
+    With this change the "multi-match" operators are also normalized in case the targeted collection doesn't have any records
+    (_or in other words, `@collection.example.someField != "test"` will result to `true` if `example` collection has no records because it satisfies the condition that all available "example" records mustn't have `someField` equal to "test"_).
+    As a side-effect of all of the above minor changes, the record create API performance has been also improved ~4x times in high concurrent scenarios (500 concurrent clients inserting total of 50k records - [old (58.409064001s)](https://github.com/pocketbase/benchmarks/blob/54140be5fb0102f90034e1370c7f168fbcf0ddf0/results/hetzner_cax41_cgo.md#creating-50000-posts100k-reqs50000-conc500-rulerequestauthid----requestdatapublicisset--true) vs [new (13.580098262s)](https://github.com/pocketbase/benchmarks/blob/7df0466ac9bd62fe0a1056270d20ef82012f0234/results/hetzner_cax41_cgo.md#creating-50000-posts100k-reqs50000-conc500-rulerequestauthid----requestbodypublicisset--true)).
 
-- Added `core.RealtimeConnectEvent.IdleTimeout` field to allow specifying a different realtime idle timeout duration per client basis ([#3054](https://github.com/pocketbase/pocketbase/discussions/3054)).
+- ⚠️ Changed the type definition of `store.Store[T any]` to `store.Store[K comparable, T any]` to allow support for custom store key types.
+    For most users it should be non-breaking change, BUT if you are calling `store.New[any](nil)` instances you'll have to specify the store key type, aka. `store.New[string, any](nil)`.
 
-- Fixed `apis.RequestData` deprecation log note ([#3068](https://github.com/pocketbase/pocketbase/pull/3068); thanks @gungjodi).
+- Added `@yesterday` and `@tomorrow` datetime filter macros.
 
+- Added `:lower` filter modifier (e.g. `title:lower = "lorem"`).
 
-## v0.17.1
+- Added `mailer.Message.InlineAttachments` field for attaching inline files to an email (_aka. `cid` links_).
 
-- Use relative path when redirecting to the OAuth2 providers page in the Admin UI to support subpath deployments ([#3026](https://github.com/pocketbase/pocketbase/pull/3026); thanks @sonyarianto).
+- Added cache for the JSVM `arrayOf(m)`, `DynamicModel`, etc. dynamic `reflect` created types.
 
-- Manually trigger the `OnBeforeServe` hook for `tests.ApiScenario` ([#3025](https://github.com/pocketbase/pocketbase/discussions/3025)).
+- Added auth collection select for the settings "Send test email" popup ([#6166](https://github.com/pocketbase/pocketbase/issues/6166)).
 
-- Trigger the JSVM `cronAdd()` handler only on app `serve` to prevent unexpected (and eventually duplicated) cron handler calls when custom console commands are used ([#3024](https://github.com/pocketbase/pocketbase/discussions/3024#discussioncomment-6592703)).
+- Added `record.SetRandomPassword()` to simplify random password generation usually used in the OAuth2 or OTP record creation flows.
+    _The generated ~30 chars random password is assigned directly as bcrypt hash and ignores the `password` field plain value validators like min/max length or regex pattern._
 
-- The `console.log()` messages are now written to the `stdout` instead of `stderr`.
+- Added option to list and trigger the registered app level cron jobs via the Web API and UI.
 
+- Added extra validators for the collection field `int64` options (e.g. `FileField.MaxSize`) restricting them to the max safe JSON number (2^53-1).
 
-## v0.17.0
+- Added option to unset/overwrite the default PocketBase superuser installer using `ServeEvent.InstallerFunc`.
 
-- New more detailed guides for using PocketBase as framework (both Go and JS).
-  _If you find any typos or issues with the docs please report them in https://github.com/pocketbase/site._
+- Added `app.FindCachedCollectionReferences(collection, excludeIds)` to speedup records cascade delete almost twice for projects with many collections.
 
-- Added new experimental JavaScript app hooks binding via [goja](https://github.com/dop251/goja).
-  They are available by default with the prebuilt executable if you create `*.pb.js` file(s) in the `pb_hooks` directory.
-  Lower your expectations because the integration comes with some limitations. For more details please check the [Extend with JavaScript](https://pocketbase.io/docs/js-overview/) guide.
-  Optionally, you can also enable the JS app hooks as part of a custom Go build for dynamic scripting but you need to register the `jsvm` plugin manually:
-  ```go
-  jsvm.MustRegister(app core.App, config jsvm.Config{})
-  ```
+- Added `tests.NewTestAppWithConfig(config)` helper if you need more control over the test configurations like `IsDev`, the number of allowed connections, etc.
 
-- Added Instagram OAuth2 provider ([#2534](https://github.com/pocketbase/pocketbase/pull/2534); thanks @pnmcosta).
+- Invalidate all record tokens when the auth record email is changed programmatically or by a superuser ([#5964](https://github.com/pocketbase/pocketbase/issues/5964)).
 
-- Added VK OAuth2 provider ([#2533](https://github.com/pocketbase/pocketbase/pull/2533); thanks @imperatrona).
+- Eagerly interrupt waiting for the email alert send in case it takes longer than 15s.
 
-- Added Yandex OAuth2 provider ([#2762](https://github.com/pocketbase/pocketbase/pull/2762); thanks @imperatrona).
+- Normalized the hidden fields filter checks and allow targetting hidden fields in the List API rule.
 
-- Added new fields to `core.ServeEvent`:
-  ```go
-  type ServeEvent struct {
-    App    App
-    Router *echo.Echo
-    // new fields
-    Server      *http.Server      // allows adjusting the HTTP server config (global timeouts, TLS options, etc.)
-    CertManager *autocert.Manager // allows adjusting the autocert options (cache dir, host policy, etc.)
-  }
-  ```
+- Fixed "Unique identify fields" input not refreshing on unique indexes change ([#6184](https://github.com/pocketbase/pocketbase/issues/6184)).
 
-- Added `record.ExpandedOne(rel)` and `record.ExpandedAll(rel)` helpers to retrieve casted single or multiple expand relations from the already loaded "expand" Record data.
 
-- Added rule and filter record `Dao` helpers:
-  ```go
-  app.Dao().FindRecordsByFilter("posts", "title ~ 'lorem ipsum' && visible = true", "-created", 10)
-  app.Dao().FindFirstRecordByFilter("posts", "slug='test' && active=true")
-  app.Dao().CanAccessRecord(record, requestInfo, rule)
-  ```
+## v0.23.12
 
-- Added `Dao.WithoutHooks()` helper to create a new `Dao` from the current one but without the create/update/delete hooks.
+- Added warning logs in case of mismatched `modernc.org/sqlite` and `modernc.org/libc` versions ([#6136](https://github.com/pocketbase/pocketbase/issues/6136#issuecomment-2556336962)).
 
-- Use a default fetch function that will return all relations in case the `fetchFunc` argument of `Dao.ExpandRecord(record, expands, fetchFunc)` and `Dao.ExpandRecords(records, expands, fetchFunc)` is `nil`.
+- Skipped the default body size limit middleware for the backup upload endpoint ([#6152](https://github.com/pocketbase/pocketbase/issues/6152)).
 
-- For convenience it is now possible to call `Dao.RecordQuery(collectionModelOrIdentifier)` with just the collection id or name.
-  In case an invalid collection id/name string is passed the query will be resolved with cancelled context error.
 
-- Refactored `apis.ApiError` validation errors serialization to allow `map[string]error` and `map[string]any` when generating the public safe formatted `ApiError.Data`.
+## v0.23.11
 
-- Added support for wrapped API errors (_in case Go 1.20+ is used with multiple wrapped errors, the first `apis.ApiError` takes precedence_).
+- Upgraded `golang.org/x/net` to 0.33.0 to fix [CVE-2024-45338](https://www.cve.org/CVERecord?id=CVE-2024-45338).
+  _PocketBase uses the vulnerable functions primarily for the auto html->text mail generation, but most applications shouldn't be affected unless you are manually embedding unrestricted user provided value in your mail templates._
 
-- Added `?download=1` file query parameter to the file serving endpoint to force the browser to always download the file and not show its preview.
 
-- Added new utility `github.com/pocketbase/pocketbase/tools/template` subpackage to assist with rendering HTML templates using the standard Go `html/template` and `text/template` syntax.
+## v0.23.10
 
-- Added `types.JsonMap.Get(k)` and `types.JsonMap.Set(k, v)` helpers for the cases where the type aliased direct map access is not allowed (eg. in [goja](https://pkg.go.dev/github.com/dop251/goja#hdr-Maps_with_methods)).
+- Renew the superuser file token cache when clicking on the thumb preview or download link ([#6137](https://github.com/pocketbase/pocketbase/discussions/6137)).
 
-- Soft-deprecated `security.NewToken()` in favor of `security.NewJWT()`.
+- Upgraded `modernc.org/sqlite` to 1.34.3 to fix "disk io" error on arm64 systems.
+    _If you are extending PocketBase with Go and upgrading with `go get -u` make sure to manually set in your go.mod the `modernc.org/libc` indirect dependency to v1.55.3, aka. the exact same version the driver is using._
 
-- `Hook.Add()` and `Hook.PreAdd` now returns a unique string identifier that could be used to remove the registered hook handler via `Hook.Remove(handlerId)`.
 
-- Changed the after* hooks to be called right before writing the user response, allowing users to return response errors from the after hooks.
-  There is also no longer need for returning explicitly `hook.StopPropagtion` when writing custom response body in a hook because we will skip the finalizer response body write if a response was already "committed".
+## v0.23.9
 
-- ⚠️ Renamed `*Options{}` to `Config{}` for consistency and replaced the unnecessary pointers with their value equivalent to keep the applied configuration defaults isolated within their function calls:
-  ```go
-  old: pocketbase.NewWithConfig(config *pocketbase.Config) *pocketbase.PocketBase
-  new: pocketbase.NewWithConfig(config pocketbase.Config) *pocketbase.PocketBase
+- Replaced `strconv.Itoa` with `strconv.FormatInt` to avoid the int64->int conversion overflow on 32-bit platforms ([#6132](https://github.com/pocketbase/pocketbase/discussions/6132)).
 
-  old: core.NewBaseApp(config *core.BaseAppConfig) *core.BaseApp
-  new: core.NewBaseApp(config core.BaseAppConfig) *core.BaseApp
 
-  old: apis.Serve(app core.App, options *apis.ServeOptions) error
-  new: apis.Serve(app core.App, config apis.ServeConfig) (*http.Server, error)
+## v0.23.8
 
-  old: jsvm.MustRegisterMigrations(app core.App, options *jsvm.MigrationsOptions)
-  new: jsvm.MustRegister(app core.App, config jsvm.Config)
+- Fixed Model->Record and Model->Collection hook events sync for nested and/or inner-hook transactions ([#6122](https://github.com/pocketbase/pocketbase/discussions/6122)).
 
-  old: ghupdate.MustRegister(app core.App, rootCmd *cobra.Command, options *ghupdate.Options)
-  new: ghupdate.MustRegister(app core.App, rootCmd *cobra.Command, config ghupdate.Config)
+- Other minor improvements (updated Go and npm deps, added extra escaping for the default mail record params in case the emails are stored as html files, fixed code comment typos, etc.).
 
-  old: migratecmd.MustRegister(app core.App, rootCmd *cobra.Command, options *migratecmd.Options)
-  new: migratecmd.MustRegister(app core.App, rootCmd *cobra.Command, config migratecmd.Config)
-  ```
 
-- ⚠️ Changed the type of `subscriptions.Message.Data` from `string` to `[]byte` because `Data` usually is a json bytes slice anyway.
+## v0.23.7
 
-- ⚠️ Renamed `models.RequestData` to `models.RequestInfo` and soft-deprecated `apis.RequestData(c)` in favor of `apis.RequestInfo(c)` to avoid the stuttering with the `Data` field.
-  _The old `apis.RequestData()` method still works to minimize the breaking changes but it is recommended to replace it with `apis.RequestInfo(c)`._
+- Fixed JSVM exception -> Go error unwrapping when throwing errors from non-request hooks ([#6102](https://github.com/pocketbase/pocketbase/discussions/6102)).
 
-- ⚠️ Changes to the List/Search APIs
-    - Added new query parameter `?skipTotal=1` to skip the `COUNT` query performed with the list/search actions ([#2965](https://github.com/pocketbase/pocketbase/discussions/2965)).
-      If `?skipTotal=1` is set, the response fields `totalItems` and `totalPages` will have `-1` value (this is to avoid having different JSON responses and to differentiate from the zero default).
-      With the latest JS SDK 0.16+ and Dart SDK v0.11+ versions `skipTotal=1` is set by default for the `getFirstListItem()` and `getFullList()` requests.
 
-    - The count and regular select statements also now executes concurrently, meaning that we no longer perform normalization over the `page` parameter and in case the user
-      request a page that doesn't exist (eg. `?page=99999999`) we'll return empty `items` array.
+## v0.23.6
 
-    - Reverted the default `COUNT` column to `id` as there are some common situations where it can negatively impact the query performance.
-      Additionally, from this version we also set `PRAGMA temp_store = MEMORY` so that also helps with the temp B-TREE creation when `id` is used.
-      _There are still scenarios where `COUNT` queries with `rowid` executes faster, but the majority of the time when nested relations lookups are used it seems to have the opposite effect (at least based on the benchmarks dataset)._
+- Fixed `$filesystem.fileFromURL` documentation and generated type ([#6058](https://github.com/pocketbase/pocketbase/issues/6058)).
 
-- ⚠️ Disallowed relations to views **from non-view** collections ([#3000](https://github.com/pocketbase/pocketbase/issues/3000)).
-  The change was necessary because I wasn't able to find an efficient way to track view changes and the previous behavior could have too many unexpected side-effects (eg. view with computed ids).
-  There is a system migration that will convert the existing view `relation` fields to `json` (multiple) and `text` (single) fields.
-  This could be a breaking change if you have `relation` to view and use `expand` or some of the `relation` view fields as part of a collection rule.
+- Fixed `X-Forwarded-For` header typo in the suggested UI "Common trusted proxy" headers ([#6063](https://github.com/pocketbase/pocketbase/pull/6063)).
 
-- ⚠️ Added an extra `action` argument to the `Dao` hooks to allow skipping the default persist behavior.
-  In preparation for the logs generalization, the `Dao.After*Func` methods now also allow returning an error.
+- Updated the `text` field max length validator error message to make it more clear ([#6066](https://github.com/pocketbase/pocketbase/issues/6066)).
 
-- Allowed `0` as `RelationOptions.MinSelect` value to avoid the ambiguity between 0 and non-filled input value ([#2817](https://github.com/pocketbase/pocketbase/discussions/2817)).
+- Other minor fixes (updated Go deps, skipped unnecessary validator check when the default primary key pattern is used, updated JSVM types, etc.).
 
-- Fixed zero-default value not being used if the field is not explicitly set when manually creating records ([#2992](https://github.com/pocketbase/pocketbase/issues/2992)).
-  Additionally, `record.Get(field)` will now always return normalized value (the same as in the json serialization) for consistency and to avoid ambiguities with what is stored in the related DB table.
-  The schema fields columns `DEFAULT` definition was also updated for new collections to ensure that `NULL` values can't be accidentally inserted.
 
-- Fixed `migrate down` not returning the correct `lastAppliedMigrations()` when the stored migration applied time is in seconds.
+## v0.23.5
 
-- Fixed realtime delete event to be called after the record was deleted from the DB (_including transactions and cascade delete operations_).
+- Fixed UI logs search not properly accounting for the "Include requests by superusers" toggle when multiple search expressions are used.
 
-- Other minor fixes and improvements (typos and grammar fixes, updated dependencies, removed unnecessary 404 error check in the Admin UI, etc.).
+- Fixed `text` field max validation error message ([#6053](https://github.com/pocketbase/pocketbase/issues/6053)).
 
+- Other minor fixes (comment typos, JSVM types update).
 
-## v0.16.10
+- Updated Go deps and the min Go release GitHub action version to 1.23.4.
 
-- Added multiple valued fields (`relation`, `select`, `file`) normalizations to ensure that the zero-default value of a newly created multiple field is applied for already existing data ([#2930](https://github.com/pocketbase/pocketbase/issues/2930)).
 
+## v0.23.4
 
-## v0.16.9
+- Fixed `autodate` fields not refreshing when calling `Save` multiple times on the same `Record` instance ([#6000](https://github.com/pocketbase/pocketbase/issues/6000)).
 
-- Register the `eagerRequestInfoCache` middleware only for the internal `api` group routes to avoid conflicts with custom route handlers ([#2914](https://github.com/pocketbase/pocketbase/issues/2914)).
+- Added more descriptive test OTP id and failure log message ([#5982](https://github.com/pocketbase/pocketbase/discussions/5982)).
 
+- Moved the default UI CSP from meta tag to response header ([#5995](https://github.com/pocketbase/pocketbase/discussions/5995)).
 
-## v0.16.8
+- Updated Go and npm dependencies.
 
-- Fixed unique validator detailed error message not being returned when camelCase field name is used ([#2868](https://github.com/pocketbase/pocketbase/issues/2868)).
 
-- Updated the index parser to allow no space between the table name and the columns list ([#2864](https://github.com/pocketbase/pocketbase/discussions/2864#discussioncomment-6373736)).
+## v0.23.3
 
-- Updated go deps.
+- Fixed Gzip middleware not applying when serving static files.
 
+- Fixed `Record.Fresh()`/`Record.Clone()` methods not properly cloning `autodate` fields ([#5973](https://github.com/pocketbase/pocketbase/discussions/5973)).
 
-## v0.16.7
 
-- Minor optimization for the list/search queries to use `rowid` with the `COUNT` statement when available.
-  _This eliminates the temp B-TREE step when executing the query and for large datasets (eg. 150k) it could have 10x improvement (from ~580ms to ~60ms)._
+## v0.23.2
 
+- Fixed `RecordQuery()` custom struct scanning ([#5958](https://github.com/pocketbase/pocketbase/discussions/5958)).
 
-## v0.16.6
+- Fixed `--dev` log query print formatting.
 
-- Fixed collection index column sort normalization in the Admin UI ([#2681](https://github.com/pocketbase/pocketbase/pull/2681); thanks @SimonLoir).
+- Added support for passing more than one id in the `Hook.Unbind` method for consistency with the router.
 
-- Removed unnecessary admins count in `apis.RequireAdminAuthOnlyIfAny()` middleware ([#2726](https://github.com/pocketbase/pocketbase/pull/2726); thanks @svekko).
+- Added collection rules change list in the confirmation popup
+  (_to avoid getting anoying during development, the rules confirmation currently is enabled only when using https_).
 
-- Fixed `multipart/form-data` request bind not populating map array values ([#2763](https://github.com/pocketbase/pocketbase/discussions/2763#discussioncomment-6278902)).
 
-- Upgraded npm and Go dependencies.
+## v0.23.1
 
+- Added `RequestEvent.Blob(status, contentType, bytes)` response write helper ([#5940](https://github.com/pocketbase/pocketbase/discussions/5940)).
 
-## v0.16.5
+- Added more descriptive error messages.
 
-- Fixed the Admin UI serialization of implicit relation display fields ([#2675](https://github.com/pocketbase/pocketbase/issues/2675)).
 
-- Reset the Admin UI sort in case the active sort collection field is renamed or deleted.
+## v0.23.0
 
+> [!NOTE]
+> You don't have to upgrade to PocketBase v0.23.0 if you are not planning further developing
+> your existing app and/or are satisfied with the v0.22.x features set. There are no identified critical issues
+> with PocketBase v0.22.x yet and in the case of critical bugs and security vulnerabilities, the fixes
+> will be backported for at least until Q1 of 2025 (_if not longer_).
+>
+> **If you don't plan upgrading make sure to pin the SDKs version to their latest PocketBase v0.22.x compatible:**
+> - JS SDK: `<0.22.0`
+> - Dart SDK: `<0.19.0`
 
-## v0.16.4
+> [!CAUTION]
+> This release introduces many Go/JSVM and Web APIs breaking changes!
+>
+> Existing `pb_data` will be automatically upgraded with the start of the new executable,
+> but custom Go or JSVM (`pb_hooks`, `pb_migrations`) and JS/Dart SDK code will have to be migrated manually.
+> Please refer to the below upgrade guides:
+> - Go:   https://pocketbase.io/v023upgrade/go/.
+> - JSVM: https://pocketbase.io/v023upgrade/jsvm/.
+>
+> If you had already switched to some of the earlier `<v0.23.0-rc14` versions and have generated a full collections snapshot migration (aka. `./pocketbase migrate collections`), then you may have to regenerate the migration file to ensure that it includes the latest changes.
 
-- Fixed the selfupdate command not working on Windows due to missing `.exe` in the extracted binary path ([#2589](https://github.com/pocketbase/pocketbase/discussions/2589)).
-  _Note that the command on Windows will work from v0.16.4+ onwards, meaning that you still will have to update manually one more time to v0.16.4._
+PocketBase v0.23.0 is a major refactor of the internals with the overall goal of making PocketBase an easier to use Go framework.
+There are a lot of changes but to highlight some of the most notable ones:
 
-- Added `int64`, `int32`, `uint`, `uint64` and `uint32` support when scanning `types.DateTime` ([#2602](https://github.com/pocketbase/pocketbase/discussions/2602))
+- New and more [detailed documentation](https://pocketbase.io/docs/).
+  _The old documentation could be accessed at [pocketbase.io/old](https://pocketbase.io/old/)._
+- Replaced `echo` with a new router built on top of the Go 1.22 `net/http` mux enhancements.
+- Merged `daos` packages in `core.App` to simplify the DB operations (_the `models` package structs are also migrated in `core`_).
+- Option to specify custom `DBConnect` function as part of the app configuration to allow different `database/sql` SQLite drivers (_turso/libsql, sqlcipher, etc._) and custom builds.
+  _Note that we no longer loads the `mattn/go-sqlite3` driver by default when building with `CGO_ENABLED=1` to avoid `multiple definition` linker errors in case different CGO SQLite drivers or builds are used. You can find an example how to enable it back if you want to in the [new documentation](https://pocketbase.io/docs/go-overview/#github-commattngo-sqlite3)._
+- New hooks allowing better control over the execution chain and error handling (_including wrapping an entire hook chain in a single DB transaction_).
+- Various `Record` model improvements (_support for get/set modifiers, simplfied file upload by treating the file(s) as regular field value like `record.Set("document", file)`, etc._).
+- Dedicated fields structs with safer defaults to make it easier creating/updating collections programmatically.
+- Option to mark field as "Hidden", disallowing regular users to read or modify it (_there is also a dedicated Record hook to hide/unhide Record fields programmatically from a single place_).
+- Option to customize the default system collection fields (`id`, `email`, `password`, etc.).
+- Admins are now system `_superusers` auth records.
+- Builtin rate limiter (_supports tags, wildcards and exact routes matching_).
+- Batch/transactional Web API endpoint.
+- Impersonate Web API endpoint (_it could be also used for generating fixed/non-refreshable superuser tokens, aka. "API keys"_).
+- Support for custom user request activity log attributes.
+- One-Time Password (OTP) auth method (_via email code_).
+- Multi-Factor Authentication (MFA) support (_currently requires any 2 different auth methods to be used_).
+- Support for Record "proxy/projection" in preparation for the planned autogeneration of typed Go record models.
+- Linear OAuth2 provider ([#5909](https://github.com/pocketbase/pocketbase/pull/5909); thanks @chnfyi).
+- WakaTime OAuth2 provider ([#5829](https://github.com/pocketbase/pocketbase/pull/5829); thanks @tigawanna).
+- Notion OAuth2 provider ([#4999](https://github.com/pocketbase/pocketbase/pull/4999); thanks @s-li1).
+- monday.com OAuth2 provider ([#5346](https://github.com/pocketbase/pocketbase/pull/5346); thanks @Jaytpa01).
+- New Instagram provider compatible with the new Instagram Login APIs ([#5588](https://github.com/pocketbase/pocketbase/pull/5588); thanks @pnmcosta).
+    _The provider key is `instagram2` to prevent conflicts with existing linked users._
+- Option to retrieve the OIDC OAuth2 user info from the `id_token` payload for the cases when the provider doesn't have a dedicated user info endpoint.
+- Various minor UI improvements (_recursive `Presentable` view, slightly different collection options organization, zoom/pan for the logs chart, etc._)
+- and many more...
 
-- Updated dependencies.
+#### Go/JSVM APIs changes
 
+> - Go:   https://pocketbase.io/v023upgrade/go/.
+> - JSVM: https://pocketbase.io/v023upgrade/jsvm/.
 
-## v0.16.3
+#### SDKs changes
 
-- Fixed schema fields sort not working on Safari/Gnome Web ([#2567](https://github.com/pocketbase/pocketbase/issues/2567)).
+- [JS SDK v0.22.0](https://github.com/pocketbase/js-sdk/blob/master/CHANGELOG.md)
+- [Dart SDK v0.19.0](https://github.com/pocketbase/dart-sdk/blob/master/CHANGELOG.md)
 
-- Fixed default `PRAGMA`s not being applied for new connections ([#2570](https://github.com/pocketbase/pocketbase/discussions/2570)).
+#### Web APIs changes
 
+- New `POST /api/batch` endpoint.
 
-## v0.16.2
+- New `GET /api/collections/meta/scaffolds` endpoint.
 
-- Fixed backups archive not excluding the local `backups` directory on Windows ([#2548](https://github.com/pocketbase/pocketbase/discussions/2548#discussioncomment-5979712)).
+- New `DELETE /api/collections/{collection}/truncate` endpoint.
 
-- Changed file field to not use `dataTransfer.effectAllowed` when dropping files since it is not reliable and consistent across different OS and browsers ([#2541](https://github.com/pocketbase/pocketbase/issues/2541)).
+- New `POST /api/collections/{collection}/request-otp` endpoint.
 
-- Auto register the initial generated snapshot migration to prevent incorrectly reapplying the snapshot on Docker restart ([#2551](https://github.com/pocketbase/pocketbase/discussions/2551)).
+- New `POST /api/collections/{collection}/auth-with-otp` endpoint.
 
-- Fixed missing view id field error message typo.
+- New `POST /api/collections/{collection}/impersonate/{id}` endpoint.
 
+- ⚠️ If you are constructing requests to `/api/*` routes manually remove the trailing slash (_there is no longer trailing slash removal middleware registered by default_).
 
-## v0.16.1
+- ⚠️ Removed `/api/admins/*` endpoints because admins are converted to `_superusers` auth collection records.
 
-- Fixed backup restore not working in a container environment when `pb_data` is mounted as volume ([#2519](https://github.com/pocketbase/pocketbase/issues/2519)).
+- ⚠️ Previously when uploading new files to a multiple `file` field, new files were automatically appended to the existing field values.
+     This behaviour has changed with v0.23+ and for consistency with the other multi-valued fields when uploading new files they will replace the old ones. If you want to prepend or append new files to an existing multiple `file` field value you can use the `+` prefix or suffix:
+     ```js
+     "documents": [file1, file2]  // => [file1_name, file2_name]
+     "+documents": [file1, file2] // => [file1_name, file2_name, old1_name, old2_name]
+     "documents+": [file1, file2] // => [old1_name, old2_name, file1_name, file2_name]
+     ```
 
-- Fixed Dart SDK realtime API preview example ([#2523](https://github.com/pocketbase/pocketbase/pull/2523); thanks @xFrann).
+- ⚠️ Removed `GET /records/{id}/external-auths` and `DELETE /records/{id}/external-auths/{provider}` endpoints because this is now handled by sending list and delete requests to the `_externalAuths` collection.
 
-- Fixed typo in the backups create panel ([#2526](https://github.com/pocketbase/pocketbase/pull/2526); thanks @dschissler).
+- ⚠️ Changes to the app settings model fields and response (+new options such as `trustedProxy`, `rateLimits`, `batch`, etc.). The app settings Web APIs are mostly used by the Dashboard UI and rarely by the end users, but if you want to check all settings changes please refer to the [Settings Go struct](https://github.com/pocketbase/pocketbase/blob/develop/core/settings_model.go#L121).
 
-- Removed unnecessary slice length check in `list.ExistInSlice` ([#2527](https://github.com/pocketbase/pocketbase/pull/2527); thanks @KunalSin9h).
+- ⚠️ New flatten Collection model and fields structure. The Collection model Web APIs are mostly used by the Dashboard UI and rarely by the end users, but if you want to check all changes please refer to the [Collection Go struct](https://github.com/pocketbase/pocketbase/blob/develop/core/collection_model.go#L308).
 
-- Avoid mutating the cached request data on OAuth2 user create ([#2535](https://github.com/pocketbase/pocketbase/discussions/2535)).
+- ⚠️ The top level error response `code` key was renamed to `status` for consistency with the Go APIs.
+    The error field key remains `code`:
+    ```js
+    {
+        "status": 400, // <-- old: "code"
+        "message": "Failed to create record.",
+        "data": {
+            "title": {
+                "code": "validation_required",
+                "message": "Missing required value."
+            }
+        }
+    }
+    ```
 
-- Fixed Export Collections "Download as JSON" ([#2540](https://github.com/pocketbase/pocketbase/issues/2540)).
+- ⚠️ New fields in the `GET /api/collections/{collection}/auth-methods` response.
+    _The old `authProviders`, `usernamePassword`, `emailPassword` fields are still returned in the response but are considered deprecated and will be removed in the future._
+    ```js
+    {
+        "mfa": {
+            "duration": 100,
+            "enabled": true
+        },
+        "otp": {
+            "duration": 0,
+            "enabled": false
+        },
+        "password": {
+            "enabled": true,
+            "identityFields": ["email", "username"]
+        },
+        "oauth2": {
+            "enabled": true,
+            "providers": [{"name": "gitlab", ...}, {"name": "google", ...}]
+        },
+        // old fields...
+    }
+    ```
 
-- Fixed file field drag and drop not working in Firefox and Safari ([#2541](https://github.com/pocketbase/pocketbase/issues/2541)).
-
-
-## v0.16.0
-
-- Added automated backups (_+ cron rotation_) APIs and UI for the `pb_data` directory.
-  The backups can be also initialized programmatically using `app.CreateBackup("backup.zip")`.
-  There is also experimental restore method - `app.RestoreBackup("backup.zip")` (_currently works only on UNIX systems as it relies on execve_).
-  The backups can be stored locally or in external S3 storage (_it has its own configuration, separate from the file uploads storage filesystem_).
-
-- Added option to limit the returned API fields using the `?fields` query parameter.
-  The "fields picker" is applied for `SearchResult.Items` and every other JSON response. For example:
-  ```js
-  // original: {"id": "RECORD_ID", "name": "abc", "description": "...something very big...", "items": ["id1", "id2"], "expand": {"items": [{"id": "id1", "name": "test1"}, {"id": "id2", "name": "test2"}]}}
-  // output:   {"name": "abc", "expand": {"items": [{"name": "test1"}, {"name": "test2"}]}}
-  const result = await pb.collection("example").getOne("RECORD_ID", {
-    expand: "items",
-    fields: "name,expand.items.name",
-  })
-  ```
-
-- Added new `./pocketbase update` command to selfupdate the prebuilt executable (with option to generate a backup of your `pb_data`).
-
-- Added new `./pocketbase admin` console command:
-  ```sh
-  // creates new admin account
-  ./pocketbase admin create test@example.com 123456890
-
-  // changes the password of an existing admin account
-  ./pocketbase admin update test@example.com 0987654321
-
-  // deletes single admin account (if exists)
-  ./pocketbase admin delete test@example.com
-  ```
-
-- Added `apis.Serve(app, options)` helper to allow starting the API server programmatically.
-
-- Updated the schema fields Admin UI for "tidier" fields visualization.
-
-- Updated the logs "real" user IP to check for `Fly-Client-IP` header and changed the `X-Forward-For` header to use the first non-empty leftmost-ish IP as it the closest to the "real IP".
-
-- Added new `tools/archive` helper subpackage for managing archives (_currently works only with zip_).
-
-- Added new `tools/cron` helper subpackage for scheduling task using cron-like syntax (_this eventually may get exported in the future in a separate repo_).
-
-- Added new `Filesystem.List(prefix)` helper to retrieve a flat list with all files under the provided prefix.
-
-- Added new `App.NewBackupsFilesystem()` helper to create a dedicated filesystem abstraction for managing app data backups.
-
-- Added new `App.OnTerminate()` hook (_executed right before app termination, eg. on `SIGTERM` signal_).
-
-- Added `accept` file field attribute with the field MIME types ([#2466](https://github.com/pocketbase/pocketbase/pull/2466); thanks @Nikhil1920).
-
-- Added support for multiple files sort in the Admin UI ([#2445](https://github.com/pocketbase/pocketbase/issues/2445)).
-
-- Added support for multiple relations sort in the Admin UI.
-
-- Added `meta.isNew` to the OAuth2 auth JSON response to indicate a newly OAuth2 created PocketBase user.
+- ⚠️ Soft-deprecated the OAuth2 auth success `meta.avatarUrl` field in favour of `meta.avatarURL`.

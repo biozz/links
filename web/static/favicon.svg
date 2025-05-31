@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- First link: right and up -->
+  <g stroke="#333" stroke-width="6" fill="none">
+    <ellipse cx="40" cy="24" rx="16" ry="10" transform="rotate(30 40 24)" />
+    <ellipse cx="24" cy="40" rx="16" ry="10" transform="rotate(-30 24 40)" />
+  </g>
+</svg>

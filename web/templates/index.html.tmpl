@@ -1,6 +1,6 @@
 {{ define "content" }}
-  <div class="search-container">
-    <form hx-get="/expand/html" hx-trigger="submit" class="search-container__form">
+  <div >
+    <form hx-get="/expand/html" hx-trigger="submit">
       <input
         hx-get="/items"
         hx-trigger="use from:body"
@@ -12,25 +12,18 @@
         @keydown.ctrl.enter.prevent="window.open(expandURL, '_blank'); $nextTick(() => { $dispatch('expand') })"
         name="q"
         type="text"
-        class="search-container__form__input"
         autocomplete="off"
       />
     </form>
-    <div hx-get="/items" hx-trigger="load" class="search-container__items" id="items"></div>
-  </div>
+    <div hx-get="/items" hx-trigger="load" id="items"></div>
   <div class="logs-container">
     <div
       hx-get="/logs"
-      hx-trigger="load, expand from:body delay:1s"
+      hx-trigger="load, expand from:body delay:1s, use from:body"
+      :hx-vals='JSON.stringify({"q": $data.search})'
       id="logs"
     ></div>
   </div>
-  <div class="stats-container">
-    <div
-      hx-get="/stats"
-      hx-trigger="load, expand from:body delay:500ms"
-      id="stats"
-      class="stats-container__toplow"
-    ></div>
+
   </div>
 {{ end }}

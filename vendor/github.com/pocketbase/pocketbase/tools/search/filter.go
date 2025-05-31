@@ -34,8 +34,23 @@ var parsedFilterData = store.New(make(map[string][]fexpr.ExprGroup, 50))
 //
 // The filter string can also contain dbx placeholder parameters (eg. "title = {:name}"),
 // that will be safely replaced and properly quoted inplace with the placeholderReplacements values.
+//
+// The parsed expressions are limited up to DefaultFilterExprLimit.
+// Use [FilterData.BuildExprWithLimit] if you want to set a custom limit.
 func (f FilterData) BuildExpr(
 	fieldResolver FieldResolver,
+	placeholderReplacements ...dbx.Params,
+) (dbx.Expression, error) {
+	return f.BuildExprWithLimit(fieldResolver, DefaultFilterExprLimit, placeholderReplacements...)
+}
+
+// BuildExpr parses the current filter data and returns a new db WHERE expression.
+//
+// The filter string can also contain dbx placeholder parameters (eg. "title = {:name}"),
+// that will be safely replaced and properly quoted inplace with the placeholderReplacements values.
+func (f FilterData) BuildExprWithLimit(
+	fieldResolver FieldResolver,
+	maxExpressions int,
 	placeholderReplacements ...dbx.Params,
 ) (dbx.Expression, error) {
 	raw := string(f)
@@ -64,9 +79,12 @@ func (f FilterData) BuildExpr(
 		}
 	}
 
-	if parsedFilterData.Has(raw) {
-		return buildParsedFilterExpr(parsedFilterData.Get(raw), fieldResolver)
+	cacheKey := raw + "/" + strconv.Itoa(maxExpressions)
+
+	if data, ok := parsedFilterData.GetOk(cacheKey); ok {
+		return buildParsedFilterExpr(data, fieldResolver, &maxExpressions)
 	}
+
 	data, err := fexpr.Parse(raw)
 	if err != nil {
 		// depending on the users demand we may allow empty expressions
@@ -78,15 +96,17 @@ func (f FilterData) BuildExpr(
 
 		return nil, err
 	}
+
 	// store in cache
 	// (the limit size is arbitrary and it is there to prevent the cache growing too big)
-	parsedFilterData.SetIfLessThanLimit(raw, data, 500)
-	return buildParsedFilterExpr(data, fieldResolver)
+	parsedFilterData.SetIfLessThanLimit(cacheKey, data, 500)
+
+	return buildParsedFilterExpr(data, fieldResolver, &maxExpressions)
 }
 
-func buildParsedFilterExpr(data []fexpr.ExprGroup, fieldResolver FieldResolver) (dbx.Expression, error) {
+func buildParsedFilterExpr(data []fexpr.ExprGroup, fieldResolver FieldResolver, maxExpressions *int) (dbx.Expression, error) {
 	if len(data) == 0 {
-		return nil, errors.New("empty filter expression")
+		return nil, fexpr.ErrEmpty
 	}
 
 	result := &concatExpr{separator: " "}
@@ -97,11 +117,17 @@ func buildParsedFilterExpr(data []fexpr.ExprGroup, fieldResolver FieldResolver) 
 
 		switch item := group.Item.(type) {
 		case fexpr.Expr:
+			if *maxExpressions <= 0 {
+				return nil, ErrFilterExprLimit
+			}
+
+			*maxExpressions--
+
 			expr, exprErr = resolveTokenizedExpr(item, fieldResolver)
 		case fexpr.ExprGroup:
-			expr, exprErr = buildParsedFilterExpr([]fexpr.ExprGroup{item}, fieldResolver)
+			expr, exprErr = buildParsedFilterExpr([]fexpr.ExprGroup{item}, fieldResolver, maxExpressions)
 		case []fexpr.ExprGroup:
-			expr, exprErr = buildParsedFilterExpr(item, fieldResolver)
+			expr, exprErr = buildParsedFilterExpr(item, fieldResolver, maxExpressions)
 		default:
 			exprErr = errors.New("unsupported expression item")
 		}
@@ -223,13 +249,22 @@ func buildResolversExpr(
 	return expr, nil
 }
 
+var normalizedIdentifiers = map[string]string{
+	// if `null` field is missing, treat `null` identifier as NULL token
+	"null": "NULL",
+	// if `true` field is missing, treat `true` identifier as TRUE token
+	"true": "1",
+	// if `false` field is missing, treat `false` identifier as FALSE token
+	"false": "0",
+}
+
 func resolveToken(token fexpr.Token, fieldResolver FieldResolver) (*ResolverResult, error) {
 	switch token.Type {
 	case fexpr.TokenIdentifier:
 		// check for macros
 		// ---
 		if macroFunc, ok := identifierMacros[token.Literal]; ok {
-			placeholder := "t" + security.PseudorandomString(5)
+			placeholder := "t" + security.PseudorandomString(8)
 
 			macroValue, err := macroFunc()
 			if err != nil {
@@ -245,40 +280,43 @@ func resolveToken(token fexpr.Token, fieldResolver FieldResolver) (*ResolverResu
 		// custom resolver
 		// ---
 		result, err := fieldResolver.Resolve(token.Literal)
-
 		if err != nil || result.Identifier == "" {
-			m := map[string]string{
-				// if `null` field is missing, treat `null` identifier as NULL token
-				"null": "NULL",
-				// if `true` field is missing, treat `true` identifier as TRUE token
-				"true": "1",
-				// if `false` field is missing, treat `false` identifier as FALSE token
-				"false": "0",
-			}
-			if v, ok := m[strings.ToLower(token.Literal)]; ok {
-				return &ResolverResult{Identifier: v}, nil
+			for k, v := range normalizedIdentifiers {
+				if strings.EqualFold(k, token.Literal) {
+					return &ResolverResult{Identifier: v}, nil
+				}
 			}
 			return nil, err
 		}
 
 		return result, err
 	case fexpr.TokenText:
-		placeholder := "t" + security.PseudorandomString(5)
+		placeholder := "t" + security.PseudorandomString(8)
 
 		return &ResolverResult{
 			Identifier: "{:" + placeholder + "}",
 			Params:     dbx.Params{placeholder: token.Literal},
 		}, nil
 	case fexpr.TokenNumber:
-		placeholder := "t" + security.PseudorandomString(5)
+		placeholder := "t" + security.PseudorandomString(8)
 
 		return &ResolverResult{
 			Identifier: "{:" + placeholder + "}",
 			Params:     dbx.Params{placeholder: cast.ToFloat64(token.Literal)},
 		}, nil
+	case fexpr.TokenFunction:
+		fn, ok := TokenFunctions[token.Literal]
+		if !ok {
+			return nil, fmt.Errorf("unknown function %q", token.Literal)
+		}
+
+		args, _ := token.Meta.([]fexpr.Token)
+		return fn(func(argToken fexpr.Token) (*ResolverResult, error) {
+			return resolveToken(argToken, fieldResolver)
+		}, args...)
 	}
 
-	return nil, errors.New("unresolvable token type")
+	return nil, fmt.Errorf("unsupported token type %q", token.Type)
 }
 
 // Resolves = and != expressions in an attempt to minimize the COALESCE
@@ -431,6 +469,8 @@ func mergeParams(params ...dbx.Params) dbx.Params {
 	return result
 }
 
+// @todo consider adding support for custom single character wildcard
+//
 // wrapLikeParams wraps each provided param value string with `%`
 // if the param doesn't contain an explicit wildcard (`%`) character already.
 func wrapLikeParams(params dbx.Params) dbx.Params {
@@ -586,8 +626,8 @@ func (e *manyVsManyExpr) Build(db *dbx.DB, params dbx.Params) string {
 		return "0=1"
 	}
 
-	lAlias := "__ml" + security.PseudorandomString(5)
-	rAlias := "__mr" + security.PseudorandomString(5)
+	lAlias := "__ml" + security.PseudorandomString(8)
+	rAlias := "__mr" + security.PseudorandomString(8)
 
 	whereExpr, buildErr := buildResolversExpr(
 		&ResolverResult{
@@ -600,7 +640,7 @@ func (e *manyVsManyExpr) Build(db *dbx.DB, params dbx.Params) string {
 			Identifier: "[[" + rAlias + ".multiMatchValue]]",
 			// note: the AfterBuild needs to be handled only once and it
 			// doesn't matter whether it is applied on the left or right subquery operand
-			AfterBuild: multiMatchAfterBuildFunc(e.op, lAlias, rAlias),
+			AfterBuild: dbx.Not, // inverse for the not-exist expression
 		},
 	)
 
@@ -622,7 +662,7 @@ func (e *manyVsManyExpr) Build(db *dbx.DB, params dbx.Params) string {
 
 var _ dbx.Expression = (*manyVsOneExpr)(nil)
 
-// manyVsManyExpr constructs a multi-match many<->one db where expression.
+// manyVsOneExpr constructs a multi-match many<->one db where expression.
 //
 // Expects subQuery to return a subquery with a single "multiMatchValue" column.
 //
@@ -643,12 +683,12 @@ func (e *manyVsOneExpr) Build(db *dbx.DB, params dbx.Params) string {
 		return "0=1"
 	}
 
-	alias := "__sm" + security.PseudorandomString(5)
+	alias := "__sm" + security.PseudorandomString(8)
 
 	r1 := &ResolverResult{
 		NoCoalesce: e.noCoalesce,
 		Identifier: "[[" + alias + ".multiMatchValue]]",
-		AfterBuild: multiMatchAfterBuildFunc(e.op, alias),
+		AfterBuild: dbx.Not, // inverse for the not-exist expression
 	}
 
 	r2 := &ResolverResult{
@@ -675,32 +715,4 @@ func (e *manyVsOneExpr) Build(db *dbx.DB, params dbx.Params) string {
 		alias,
 		whereExpr.Build(db, params),
 	)
-}
-
-func multiMatchAfterBuildFunc(op fexpr.SignOp, multiMatchAliases ...string) func(dbx.Expression) dbx.Expression {
-	return func(expr dbx.Expression) dbx.Expression {
-		expr = dbx.Not(expr) // inverse for the not-exist expression
-
-		if op == fexpr.SignEq {
-			return expr
-		}
-
-		orExprs := make([]dbx.Expression, len(multiMatchAliases)+1)
-		orExprs[0] = expr
-
-		// Add an optional "IS NULL" condition(s) to handle the empty rows result.
-		//
-		// For example, let's assume that some "rel" field is [nonemptyRel1, nonemptyRel2, emptyRel3],
-		// The filter "rel.total > 0" ensures that the above will return true only if all relations
-		// are existing and match the condition.
-		//
-		// The "=" operator is excluded because it will never equal directly with NULL anyway
-		// and also because we want in case "rel.id = ''" is specified to allow
-		// matching the empty relations (they will match due to the applied COALESCE).
-		for i, mAlias := range multiMatchAliases {
-			orExprs[i+1] = dbx.NewExp("[[" + mAlias + ".multiMatchValue]] IS NULL")
-		}
-
-		return dbx.Enclose(dbx.Or(orExprs...))
-	}
 }
