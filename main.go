@@ -114,8 +114,9 @@ func main() {
 		}).BindFunc(authMiddleware.Frontend)
 
 		se.Router.GET("/help", func(e *core.RequestEvent) error {
+			cookie, _ := e.Request.Cookie(COOKIE_NAME)
 			ctx := HelpContext{
-				Token:  authMiddleware.GetDeviceIdFromCookie(e),
+				Token:  cookie.Value,
 				AppURL: app.Settings().Meta.AppURL,
 			}
 			return tmpls.RenderEcho(e.Response, "help", ctx, e)
