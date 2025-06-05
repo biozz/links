@@ -115,9 +115,11 @@ func main() {
 
 		se.Router.GET("/help", func(e *core.RequestEvent) error {
 			cookie, _ := e.Request.Cookie(COOKIE_NAME)
+			deviceID := authMiddleware.GetDeviceIdFromCookie(e)
 			ctx := HelpContext{
-				Token:  cookie.Value,
-				AppURL: app.Settings().Meta.AppURL,
+				DeviceID: deviceID,
+				Token:    cookie.Value,
+				AppURL:   app.Settings().Meta.AppURL,
 			}
 			return tmpls.RenderEcho(e.Response, "help", ctx, e)
 		})
@@ -299,8 +301,9 @@ type NavContext struct {
 }
 
 type HelpContext struct {
-	Token  string
-	AppURL string
+	DeviceID string
+	Token    string
+	AppURL   string
 }
 
 func expand(item Item, q string) Expansion {
