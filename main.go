@@ -43,11 +43,11 @@ func main() {
 		}).BindFunc(authMiddleware.Frontend)
 
 		se.Router.POST("/items", func(e *core.RequestEvent) error {
-			var newItem Item
-			if err := e.BindBody(&newItem); err != nil {
+			newItem, err := bindItem(e)
+			if err != nil {
 				return e.String(http.StatusBadRequest, err.Error())
 			}
-			err := createItem(app, newItem)
+			err = createItem(app, newItem)
 			if err != nil {
 				return e.String(http.StatusBadRequest, err.Error())
 			}
@@ -314,19 +314,34 @@ const (
 )
 
 type Item struct {
-	ID           string   `db:"id" json:"id"`
-	CollectionID string   `json:"collection_id"`
-	Name         string   `db:"name" form:"name" json:"name"`
-	Alias        string   `db:"alias" form:"alias" json:"alias"`
-	URL          string   `db:"url" form:"url" json:"url"`
-	Tags         []string `form:"tags" json:"tags"`
+	ID           string                  `db:"id" json:"id"`
+	CollectionID string                  `json:"collection_id"`
+	Name         string                  `db:"name" form:"name" json:"name"`
+	Alias        string                  `db:"alias" form:"alias" json:"alias"`
+	URL          string                  `db:"url" form:"url" json:"url"`
+	Tags         []string                `form:"tags" json:"tags"`
+	DefaultArgs  types.JSONArray[string] `db:"default_args" form:"default_args" json:"default_args"`
+}
+
+func bindItem(e *core.RequestEvent) (Item, error) {
+	var item Item
+	if err := e.BindBody(&item); err != nil {
+		return item, err
+	}
+	contentType := e.Request.Header.Get("Content-Type")
+	if strings.HasPrefix(contentType, "application/x-www-form-urlencoded") || strings.HasPrefix(contentType, "multipart/form-data") {
+		item.Tags = strings.Fields(strings.Join(item.Tags, " "))
+		item.DefaultArgs = strings.Fields(strings.Join(item.DefaultArgs, " "))
+	}
+	return item, nil
 }
 
 type Expansion struct {
-	Alias     string
-	Args      []string
-	URL       string
-	ExpandURL string
+	Alias           string
+	Args            []string
+	URL             string
+	ExpandURL       string
+	UsedDefaultArgs bool `json:"-"`
 }
 
 type ItemsContext struct {
@@ -362,26 +377,32 @@ type HelpContext struct {
 func expand(item Item, q string) Expansion {
 	url := item.URL
 	substCount := strings.Count(url, "%s")
-	qParts := strings.SplitN(q, " ", substCount+1)
-	args := make([]string, len(qParts)-1)
-	// First element is search prefix, we don't need that
-	for i := 1; i < len(qParts); i++ {
-		if strings.Contains(url, "%s") {
-			args[i-1] = qParts[i]
-			url = strings.Replace(url, "%s", qParts[i], 1)
+	qParts := strings.SplitN(strings.TrimSpace(q), " ", substCount+1)
+	// First element is the alias; defaults apply only when no arguments were supplied.
+	args := qParts[1:]
+	usedDefaultArgs := false
+	if len(args) == 0 {
+		args = item.DefaultArgs
+		if len(args) > substCount {
+			args = args[:substCount]
 		}
+		usedDefaultArgs = len(args) > 0
+	}
+	for _, arg := range args {
+		url = strings.Replace(url, "%s", arg, 1)
 	}
 	return Expansion{
-		Alias: item.Alias,
-		Args:  args,
-		URL:   url,
+		Alias:           item.Alias,
+		Args:            args,
+		URL:             url,
+		UsedDefaultArgs: usedDefaultArgs,
 	}
 }
 
 func getItemsByPrefix(app *pocketbase.PocketBase, prefix string) []Item {
 	items := make([]Item, 0)
 	app.DB().
-		NewQuery("SELECT alias, name, url FROM items WHERE alias LIKE {:like} ORDER BY (CASE WHEN alias = {:prefix} THEN 1 WHEN alias LIKE {:like} THEN 2 ELSE 3 END), alias, created ASC LIMIT 10").
+		NewQuery("SELECT alias, name, url, default_args FROM items WHERE alias LIKE {:like} ORDER BY (CASE WHEN alias = {:prefix} THEN 1 WHEN alias LIKE {:like} THEN 2 ELSE 3 END), alias, created ASC LIMIT 10").
 		Bind(dbx.Params{
 			"prefix": prefix,
 			"like":   prefix + "%",
@@ -393,7 +414,7 @@ func getItemsByPrefix(app *pocketbase.PocketBase, prefix string) []Item {
 func getItemsByExactMatch(app *pocketbase.PocketBase, alias string) []Item {
 	items := make([]Item, 0)
 	app.DB().
-		NewQuery("SELECT alias, name, url FROM items WHERE alias = {:alias}").
+		NewQuery("SELECT alias, name, url, default_args FROM items WHERE alias = {:alias}").
 		Bind(dbx.Params{
 			"alias": alias,
 		}).
@@ -411,6 +432,7 @@ func createItem(app *pocketbase.PocketBase, item Item) error {
 	record.Set("alias", item.Alias)
 	record.Set("url", item.URL)
 	record.Set("tags", item.Tags)
+	record.Set("default_args", item.DefaultArgs)
 	if err := app.Save(record); err != nil {
 		return err
 	}

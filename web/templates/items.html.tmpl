@@ -4,7 +4,10 @@
 {{ end }}
   {{ if .Expansion.URL }}
     <article>
-      <div contenteditable>{{ .Expansion.URL }}</div>
+      <div contenteditable style="overflow-wrap: anywhere;">{{ .Expansion.URL }}</div>
+      {{ if .Expansion.UsedDefaultArgs }}
+      <small style="display: block; color: var(--pico-muted-color);">(default arguments)</small>
+      {{ end }}
       {{ if .IsGoogle }}
       <p>There are no aliases with that prefix, treating it like a google query</p>
       {{ end }}
