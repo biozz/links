@@ -288,8 +288,7 @@ func main() {
 			if err != nil {
 				return err
 			}
-			e.Response.Header().Set("Content-Type", "application/opensearchdescription+xml")
-			return e.XML(http.StatusOK, output.Bytes())
+			return e.Blob(http.StatusOK, "application/opensearchdescription+xml", output.Bytes())
 			// not using AuthMiddleware, because Firefox can't download the search engine definition otherwise.
 		})
 
