@@ -2,14 +2,21 @@ package logger
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"log/slog"
 	"sync"
 
-	validation "github.com/go-ozzo/ozzo-validation/v4"
+	validation "github.com/pocketbase/ozzo-validation/v4"
 	"github.com/pocketbase/pocketbase/tools/types"
 )
+
+// contextKey is an alias type to prevent collisions with other log context keys.
+type contextKey int
+
+// BlockKey is a context key usually used to indicate that the
+// batched logs write should block until writes are completed.
+var BlockKey contextKey
 
 var _ slog.Handler = (*BatchHandler)(nil)
 

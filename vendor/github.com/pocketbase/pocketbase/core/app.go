@@ -54,11 +54,16 @@ type App interface {
 	// Bootstrap initializes the application
 	// (aka. create data dir, open db connections, load settings, etc.).
 	//
-	// It will call ResetBootstrapState() if the application was already bootstrapped.
+	// It calls ClearBootstrap() if the application was already bootstrapped.
 	Bootstrap() error
 
-	// ResetBootstrapState releases the initialized core app resources
+	// ClearBootstrap releases the initialized core app resources
 	// (closing db connections, stopping cron ticker, etc.).
+	//
+	// This method is no-op if the application is not bootstrapped yet.
+	ClearBootstrap() error
+
+	// Deprecated: use ClearBootstrap().
 	ResetBootstrapState() error
 
 	// DataDir returns the app data directory path.
@@ -266,6 +271,15 @@ type App interface {
 	// NB! Be aware that this method is vulnerable to SQL injection and the
 	// "dangerousSelectQuery" argument must come only from trusted input!
 	CreateViewFields(dangerousSelectQuery string) (FieldsList, error)
+
+	// DryRunView executes the provided query by creating a temporary view
+	// collection and returning a sample of the resulting query records (if valid).
+	//
+	// The same caveats from CreateViewFields apply here too.
+	//
+	// NB! Be aware that this method is vulnerable to SQL injection and the
+	// "dangerousSelectQuery" argument must come only from trusted input!
+	DryRunView(dangerousSelectQuery string, sampleSize int) (*DryRunViewResult, error)
 
 	// FindRecordByViewFile returns the original Record of the provided view collection file.
 	FindRecordByViewFile(viewCollectionModelOrIdentifier any, fileFieldName string, filename string) (*Record, error)
@@ -493,6 +507,11 @@ type App interface {
 	// ExternalAuth model that satisfies the non-nil expression.
 	FindFirstExternalAuthByExpr(expr dbx.Expression) (*ExternalAuth, error)
 
+	// DeleteAllExternalAuthsByRecord deletes all ExternalAuth models associated with the provided record.
+	//
+	// Returns a combined error with the failed deletes.
+	DeleteAllExternalAuthsByRecord(authRecord *Record) error
+
 	// ---------------------------------------------------------------
 
 	// FindAllMFAsByRecord returns all MFA models linked to the provided auth record.
@@ -698,6 +717,13 @@ type App interface {
 	// OnBootstrap hook is triggered when initializing the main application
 	// resources (db, app settings, etc).
 	OnBootstrap() *hook.Hook[*BootstrapEvent]
+
+	// OnBootstrapClear hook is triggered when clearing the main application
+	// resources (db connections, cron, logger, etc.)
+	//
+	// It is usually invoked automatically right before app termination
+	// or when manually calling app.ClearBootstrap().
+	OnBootstrapClear() *hook.Hook[*BootstrapEvent]
 
 	// OnServe hook is triggered when the app web server is started
 	// (after starting the TCP listener but before initializing the blocking serve task),
@@ -1247,6 +1273,20 @@ type App interface {
 	// then all event handlers registered via the created hook will be
 	// triggered and called only if their event data origin matches the tags.
 	OnMailerRecordOTPSend(tags ...string) *hook.TaggedHook[*MailerRecordEvent]
+
+	// ---------------------------------------------------------------
+	// Filesystem event hooks
+	// (not publicly exposed until file_field refactoring)
+	// ---------------------------------------------------------------
+
+	// onFilesystemNewWriter is an internal hook for app.NewFilesystem()
+	// instances that is triggered on every storage filesystem writer initialization
+	// (aka. whenever attempting to create a new file).
+	onFilesystemNewWriter() *hook.Hook[*FilesystemNewWriterEvent]
+
+	// onFilesystemDelete is an internal hook for app.NewFilesystem()
+	// instances that is triggered for every storage file delete call.
+	onFilesystemDelete() *hook.Hook[*FilesystemDeleteEvent]
 
 	// ---------------------------------------------------------------
 	// Realtime API event hooks

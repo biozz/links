@@ -1,6 +1,6 @@
 <p align="center">
     <a href="https://pocketbase.io" target="_blank" rel="noopener">
-        <img src="https://i.imgur.com/5qimnm5.png" alt="PocketBase - open source backend in 1 file" />
+        <img src="https://i.imgur.com/aCBbjKx.png" alt="PocketBase - open source backend in 1 file" />
     </a>
 </p>
 
@@ -49,7 +49,7 @@ your own custom app specific business logic and still have a single portable exe
 
 Here is a minimal example:
 
-0. [Install Go 1.23+](https://go.dev/doc/install) (_if you haven't already_)
+0. [Install Go 1.27+](https://go.dev/doc/install) (_if you haven't already_)
 
 1. Create a new project directory with the following `main.go` file inside it:
     ```go
@@ -92,32 +92,37 @@ _For more details please refer to [Extend with Go](https://pocketbase.io/docs/go
 
 To build the minimal standalone executable, like the prebuilt ones in the releases page, you can simply run `go build` inside the `examples/base` directory:
 
-0. [Install Go 1.24+](https://go.dev/doc/install) (_if you haven't already_)
+0. [Install Go 1.27+](https://go.dev/doc/install) (_if you haven't already_)
 1. Clone/download the repo
 2. Navigate to `examples/base`
-3. Run `GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build`
-   (_https://go.dev/doc/install/source#environment_)
+3. Run `CGO_ENABLED=0 go build` to build a binary for your current environment
+   _(or to target other platforms use `GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build`; see https://go.dev/doc/install/source#environment)_
 4. Start the created executable by running `./base serve`.
 
 Note that the supported build targets by the pure Go SQLite driver at the moment are:
 
-```
-darwin  amd64
-darwin  arm64
-freebsd amd64
-freebsd arm64
-linux   386
-linux   amd64
-linux   arm
-linux   arm64
-linux   loong64
-linux   ppc64le
-linux   riscv64
-linux   s390x
-windows 386
-windows amd64
-windows arm64
-```
+| GOOS    | GOARCH  |
+|---------|---------|
+| darwin  | amd64   |
+| darwin  | arm64   |
+| freebsd | 386     |
+| freebsd | amd64   |
+| freebsd | arm     |
+| freebsd | arm64   |
+| linux   | 386     |
+| linux   | amd64   |
+| linux   | arm     |
+| linux   | arm64   |
+| linux   | loong64 |
+| linux   | ppc64le |
+| linux   | riscv64 |
+| linux   | s390x   |
+| netbsd  | amd64   |
+| openbsd | amd64   |
+| openbsd | arm64   |
+| windows | 386     |
+| windows | amd64   |
+| windows | arm64   |
 
 ### Testing
 
@@ -134,7 +139,7 @@ Check also the [Testing guide](http://pocketbase.io/docs/testing) to learn how t
 
 If you discover a security vulnerability within PocketBase, please send an e-mail to **support at pocketbase.io**.
 
-All reports will be promptly addressed and you'll be credited in the fix release notes.
+You could find more details in the project [Security policy](https://github.com/pocketbase/pocketbase/security/policy).
 
 ## Contributing
 
@@ -146,10 +151,13 @@ You could help continuing its development by:
 - [Contribute to the source code](CONTRIBUTING.md)
 - [Suggest new features and report issues](https://github.com/pocketbase/pocketbase/issues)
 
-PRs for new OAuth2 providers, bug fixes, code optimizations and documentation improvements are more than welcome.
-
-But please refrain creating PRs for _new features_ without previously discussing the implementation details.
+Please refrain creating PRs for _new features_ without previously discussing the implementation details.
 PocketBase has a [roadmap](https://github.com/orgs/pocketbase/projects/2) and I try to work on issues in specific order and such PRs often come in out of nowhere and skew all initial planning with tedious back-and-forth communication.
 
 Don't get upset if I close your PR, even if it is well executed and tested. This doesn't mean that it will never be merged.
 Later we can always refer to it and/or take pieces of your implementation when the time comes to work on the issue (don't worry you'll be credited in the release notes).
+
+> [!IMPORTANT]
+> Due to recent LLM spam, PRs are temporary disabled and only existing collaborators can open a PR.
+> If you stumble on a problem that you want to fix, please consider instead opening an issue or discussion with link to your fork _(if not obvious - LLM contributions are not welcome)_.
+> This status may change in the future in case GitHub finally decide to do something about the constant spam, or when I find time to move the project somewhere else.

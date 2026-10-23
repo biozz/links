@@ -1,1 +1,16 @@
-.gitignore
+pb_data/
+tmp/
+.task/
+.python-version
+.envrc
+__pycache__/
+.zed/
+.git/
+.github/
+bin/
+dist/
+.local/
+.DS_Store
+extra/
+scripts/
+app.py

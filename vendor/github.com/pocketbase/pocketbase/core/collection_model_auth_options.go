@@ -1,12 +1,15 @@
 package core
 
 import (
+	"encoding/json/v2"
+	"errors"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 
-	validation "github.com/go-ozzo/ozzo-validation/v4"
-	"github.com/go-ozzo/ozzo-validation/v4/is"
+	validation "github.com/pocketbase/ozzo-validation/v4"
+	"github.com/pocketbase/ozzo-validation/v4/is"
 	"github.com/pocketbase/pocketbase/tools/auth"
 	"github.com/pocketbase/pocketbase/tools/list"
 	"github.com/pocketbase/pocketbase/tools/security"
@@ -60,7 +63,7 @@ func (m *Collection) setDefaultAuthOptions() {
 		},
 		MFA: MFAConfig{
 			Enabled:  false,
-			Duration: 1800, // 30min
+			Duration: 600, // 10min
 		},
 		OTP: OTPConfig{
 			Enabled:       false,
@@ -70,7 +73,7 @@ func (m *Collection) setDefaultAuthOptions() {
 		},
 		AuthToken: TokenConfig{
 			Secret:   security.RandomString(50),
-			Duration: 604800, // 7 days
+			Duration: 432000, // 5days
 		},
 		PasswordResetToken: TokenConfig{
 			Secret:   security.RandomString(50),
@@ -82,7 +85,7 @@ func (m *Collection) setDefaultAuthOptions() {
 		},
 		VerificationToken: TokenConfig{
 			Secret:   security.RandomString(50),
-			Duration: 259200, // 3days
+			Duration: 86400, // 1day
 		},
 		FileToken: TokenConfig{
 			Secret:   security.RandomString(50),
@@ -407,6 +410,71 @@ type OAuth2Config struct {
 	MappedFields OAuth2KnownFields `form:"mappedFields" json:"mappedFields"`
 
 	Enabled bool `form:"enabled" json:"enabled"`
+}
+
+// UnmarshalJSON implements the [json.Unmarshaler] interface.
+//
+// The main difference from the standard unmarshalization is that
+// instead of replacing the entire providers config slice, we ensure
+// that partially submitted provider data (e.g. without clientSecret)
+// is merged on per config level based on the provider name
+// (https://github.com/pocketbase/pocketbase/issues/7815).
+func (c *OAuth2Config) UnmarshalJSON(b []byte) error {
+	originalProviders := slices.Clone(c.Providers)
+
+	type alias OAuth2Config
+	err := json.Unmarshal(b, (*alias)(c))
+	if err != nil {
+		return err
+	}
+
+	if len(c.Providers) == 0 {
+		return nil
+	}
+
+	// unmarshal again but this time into a plain array of objects
+	// so that we have only the submitted fields and no zero defaults
+	plain := struct {
+		Providers []map[string]any `json:"providers"`
+	}{}
+	err = json.Unmarshal(b, &plain)
+	if err != nil {
+		return err
+	}
+
+	// no providers were submitted
+	if len(plain.Providers) == 0 {
+		return nil
+	}
+
+	if len(c.Providers) != len(plain.Providers) {
+		return errors.New("the length of the plain unmarshalized providers and the ones from the config doesn't match")
+	}
+
+ProvidersMergeLoop:
+	for i, plain := range plain.Providers {
+		for _, original := range originalProviders {
+			if original.Name == plain["name"] {
+				raw, err := json.Marshal(plain)
+				if err != nil {
+					return err
+				}
+
+				// unmarshal the new plain data on top of the original one
+				err = json.Unmarshal(raw, &original)
+				if err != nil {
+					return err
+				}
+
+				// reassigne to the updated original
+				c.Providers[i] = original
+
+				continue ProvidersMergeLoop
+			}
+		}
+	}
+
+	return nil
 }
 
 // GetProviderConfig returns the first OAuth2ProviderConfig that matches the specified name.

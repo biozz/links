@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -36,17 +37,14 @@ func (app *BaseApp) DeleteView(dangerousViewName string) error {
 func (app *BaseApp) SaveView(dangerousViewName string, dangerousSelectQuery string) error {
 	return app.RunInTransaction(func(txApp App) error {
 		// delete old view (if exists)
-		if err := txApp.DeleteView(dangerousViewName); err != nil {
+		err := txApp.DeleteView(dangerousViewName)
+		if err != nil {
 			return err
 		}
 
-		dangerousSelectQuery = strings.Trim(strings.TrimSpace(dangerousSelectQuery), ";")
-
-		// try to loosely detect multiple inline statements
-		tk := tokenizer.NewFromString(dangerousSelectQuery)
-		tk.Separators(';')
-		if queryParts, _ := tk.ScanAll(); len(queryParts) > 1 {
-			return errors.New("multiple statements are not supported")
+		dangerousSelectQuery, err = normalizeViewSelectQuery(dangerousSelectQuery)
+		if err != nil {
+			return err
 		}
 
 		// (re)create the view
@@ -54,7 +52,8 @@ func (app *BaseApp) SaveView(dangerousViewName string, dangerousSelectQuery stri
 		// note: the query is wrapped in a secondary SELECT as a rudimentary
 		// measure to discourage multiple inline sql statements execution
 		viewQuery := fmt.Sprintf("CREATE VIEW {{%s}} AS SELECT * FROM (%s)", dangerousViewName, dangerousSelectQuery)
-		if _, err := txApp.DB().NewQuery(viewQuery).Execute(); err != nil {
+		_, err = txApp.DB().NewQuery(viewQuery).Execute()
+		if err != nil {
 			return err
 		}
 
@@ -122,6 +121,82 @@ func (app *BaseApp) CreateViewFields(dangerousSelectQuery string) (FieldsList, e
 	})
 
 	return result, txErr
+}
+
+type DryRunViewResult struct {
+	Fields FieldsList `json:"fields"`
+	Sample []*Record  `json:"sample"`
+}
+
+// DryRunView executes the provided query by creating a temporary view
+// collection and returning a sample of the resulting query records (if valid).
+//
+// The same caveats from CreateViewFields apply here too.
+//
+// NB! Be aware that this method is vulnerable to SQL injection and the
+// "dangerousSelectQuery" argument must come only from trusted input!
+func (app *BaseApp) DryRunView(dangerousSelectQuery string, sampleSize int) (*DryRunViewResult, error) {
+	dangerousSelectQuery, err := normalizeViewSelectQuery(dangerousSelectQuery)
+	if err != nil {
+		return nil, err
+	}
+
+	fields, err := app.CreateViewFields(dangerousSelectQuery)
+	if err != nil {
+		return nil, err
+	}
+
+	tempName := "temp_view_" + security.RandomString(5)
+	tempCollection := NewViewCollection(tempName)
+	tempCollection.Fields = fields
+
+	// validate generated view fields
+	ctx := context.Background()
+	for i, f := range fields {
+		err = f.ValidateSettings(ctx, app, tempCollection)
+		if err != nil {
+			return nil, fmt.Errorf("invalid field %q (%d): %w", f.GetName(), i, err)
+		}
+	}
+
+	// apply the same normalization as in the collection view query
+	dangerousSelectQuery, err = normalizeViewQueryId(app, dangerousSelectQuery)
+	if err != nil {
+		return nil, fmt.Errorf("failed to normalize view query id: %w", err)
+	}
+
+	records := []*Record{}
+
+	err = app.RecordQuery(tempCollection).
+		// note: the query is wrapped in a secondary SELECT as a rudimentary
+		// measure to discourage multiple inline sql statements execution
+		From("(SELECT * FROM (" + dangerousSelectQuery + ")) as " + tempName).
+		Limit(int64(sampleSize)).
+		All(&records)
+	if err != nil {
+		return nil, fmt.Errorf("failed to retrieve query records: %w", err)
+	}
+
+	// warn for possible empty or duplicated record ids found in the sample
+	// (it is not intended for security and it is here to quickly provide a
+	// helpful error message without doing multiple query executions)
+	ids := make(map[string]struct{}, len(records))
+	for _, r := range records {
+		if r.Id == "" {
+			return nil, errors.New("the query could return records with empty or invalid ids")
+		}
+
+		if _, ok := ids[r.Id]; ok {
+			return nil, errors.New("the query could return records with non-unique ids")
+		}
+
+		ids[r.Id] = struct{}{}
+	}
+
+	return &DryRunViewResult{
+		Fields: fields,
+		Sample: records,
+	}, nil
 }
 
 // FindRecordByViewFile returns the original Record of the provided view collection file.
@@ -198,6 +273,20 @@ func (app *BaseApp) FindRecordByViewFile(viewCollectionModelOrIdentifier any, fi
 // Raw query to schema helpers
 // -------------------------------------------------------------------
 
+// loosely normalizes the specified view query and warn against multiple inline statements
+// (the check is not perfect and it is NOT intended as a security measure; it is done primarily to provide a helpful error message)
+func normalizeViewSelectQuery(dangerousSelectQuery string) (string, error) {
+	dangerousSelectQuery = strings.Trim(strings.TrimSpace(dangerousSelectQuery), ";")
+
+	tk := tokenizer.NewFromString(dangerousSelectQuery)
+	tk.Separators(';')
+	if queryParts, _ := tk.ScanAll(); len(queryParts) > 1 {
+		return "", errors.New("multiple statements are not supported")
+	}
+
+	return dangerousSelectQuery, nil
+}
+
 type queryField struct {
 	// field is the final resolved field.
 	field Field
@@ -212,9 +301,23 @@ type queryField struct {
 }
 
 func defaultViewField(name string) Field {
+	if name == FieldNameId {
+		return defaultViewIdField()
+	}
+
 	return &JSONField{
 		Name:    name,
 		MaxSize: 1, // unused for views
+	}
+}
+
+func defaultViewIdField() Field {
+	return &TextField{
+		Name:       FieldNameId,
+		System:     true,
+		Required:   true,
+		PrimaryKey: true,
+		Pattern:    `^[a-z0-9]+$`,
 	}
 }
 
@@ -240,24 +343,33 @@ func parseQueryToFields(app App, selectQuery string) (map[string]*queryField, er
 	}
 
 	for _, col := range p.columns {
+		// note: it should be safe to use the already parsed alias as there
+		// is no valid SQL where * column can be aliased to something else
+		if col.alias == "*" {
+			return nil, errors.New("wildcard columns (*) are not supported - manually type the collection field names you want the view query to have")
+		}
+
 		colLower := strings.ToLower(col.original)
 
 		// pk (always assume text field for now)
 		if col.alias == FieldNameId {
 			result[col.alias] = &queryField{
-				field: &TextField{
-					Name:       col.alias,
-					System:     true,
-					Required:   true,
-					PrimaryKey: true,
-					Pattern:    `^[a-z0-9]+$`,
-				},
+				field: defaultViewIdField(),
 			}
 			continue
 		}
 
 		// numeric aggregations
-		if strings.HasPrefix(colLower, "count(") || strings.HasPrefix(colLower, "total(") {
+		if strings.HasPrefix(colLower, "count(") {
+			result[col.alias] = &queryField{
+				field: &NumberField{
+					Name:    col.alias,
+					OnlyInt: true,
+				},
+			}
+			continue
+		}
+		if strings.HasPrefix(colLower, "total(") {
 			result[col.alias] = &queryField{
 				field: &NumberField{
 					Name: col.alias,
@@ -268,13 +380,21 @@ func parseQueryToFields(app App, selectQuery string) (map[string]*queryField, er
 
 		castMatch := castRegex.FindStringSubmatch(colLower)
 
-		// numeric casts
+		// casts
 		if len(castMatch) == 2 {
 			switch castMatch[1] {
-			case "real", "integer", "int", "decimal", "numeric":
+			case "real", "decimal", "numeric":
 				result[col.alias] = &queryField{
 					field: &NumberField{
 						Name: col.alias,
+					},
+				}
+				continue
+			case "int", "integer":
+				result[col.alias] = &queryField{
+					field: &NumberField{
+						Name:    col.alias,
+						OnlyInt: true,
 					},
 				}
 				continue
@@ -314,10 +434,6 @@ func parseQueryToFields(app App, selectQuery string) (map[string]*queryField, er
 				field: defaultViewField(col.alias),
 			}
 			continue
-		}
-
-		if fieldName == "*" {
-			return nil, errors.New("dynamic column names are not supported")
 		}
 
 		// find the first field by name (case insensitive)

@@ -11,7 +11,7 @@ import (
 
 var ErrRequestEntityTooLarge = router.NewApiError(http.StatusRequestEntityTooLarge, "Request entity too large", nil)
 
-const DefaultMaxBodySize int64 = 32 << 20
+const DefaultMaxBodySize int64 = 32 << 20 // @todo consider replacing with router.DefaultMaxMemory
 
 const (
 	DefaultBodyLimitMiddlewareId       = "pbBodyLimit"
@@ -84,37 +84,73 @@ func applyBodyLimit(e *core.RequestEvent, limitBytes int64) error {
 	}
 
 	// replace the request body
-	//
-	// note: we don't use sync.Pool since the size of the elements could vary too much
-	// and it might not be efficient (see https://github.com/golang/go/issues/23199)
-	e.Request.Body = &limitedReader{ReadCloser: e.Request.Body, limit: limitBytes}
+	e.Request.Body = newMaxBytesReader(e.Request.Body, limitBytes)
 
 	return nil
 }
 
-type limitedReader struct {
-	io.ReadCloser
-	limit     int64
-	totalRead int64
+func newMaxBytesReader(body io.ReadCloser, limitBytes int64) *maxBytesReader {
+	return &maxBytesReader{
+		ReadCloser: body,
+		limit:      limitBytes,
+		remaining:  limitBytes,
+	}
 }
 
-func (r *limitedReader) Read(b []byte) (int, error) {
+// maxBytesReader is very similar to the http.MaxBytesReader but support
+// rereads and doesn't try to prematurely close the related response
+// to allow consequent middlewares to operate correctly.
+type maxBytesReader struct {
+	io.ReadCloser
+	limit     int64
+	remaining int64
+	stickyErr error
+}
+
+func (r *maxBytesReader) Read(b []byte) (int, error) {
+	if r.stickyErr != nil {
+		return 0, r.stickyErr
+	}
+
+	if len(b) == 0 {
+		return 0, nil
+	}
+
+	// if possible no need to read the entire chunk since
+	// remaining+1 is enough to determine whether it exceed the limit
+	if int64(len(b))-1 > r.remaining {
+		b = b[:r.remaining+1]
+	}
+
 	n, err := r.ReadCloser.Read(b)
-	if err != nil {
+
+	if int64(n) <= r.remaining {
+		r.remaining -= int64(n)
+		r.stickyErr = err
 		return n, err
 	}
 
-	r.totalRead += int64(n)
-	if r.totalRead > r.limit {
-		return n, ErrRequestEntityTooLarge
-	}
+	n = int(r.remaining)
 
-	return n, nil
+	r.remaining = 0
+	r.stickyErr = ErrRequestEntityTooLarge
+
+	return n, r.stickyErr
 }
 
-func (r *limitedReader) Reread() {
-	rr, ok := r.ReadCloser.(router.Rereader)
+// explicit casts to ensure that the main struct methods will be invoked
+// (extra precautions in case of nested interface wrapping erasure)
+// ---
+
+func (r *maxBytesReader) Reread() {
+	rereader, ok := r.ReadCloser.(router.Rereader)
 	if ok {
-		rr.Reread()
+		rereader.Reread()
+		r.remaining = r.limit
+		r.stickyErr = nil
 	}
+}
+
+func (r *maxBytesReader) Close() error {
+	return r.ReadCloser.Close()
 }

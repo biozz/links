@@ -1,7 +1,7 @@
 package store
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 	"sync"
 )
 
@@ -122,7 +122,21 @@ func (s *Store[K, T]) GetAll() map[K]T {
 	return clone
 }
 
-// Values returns a slice with all of the current store values.
+// Keys returns a slice with all of the store keys.
+func (s *Store[K, T]) Keys() []K {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var keys = make([]K, 0, len(s.data))
+
+	for k := range s.data {
+		keys = append(keys, k)
+	}
+
+	return keys
+}
+
+// Values returns a slice with all of the store values.
 func (s *Store[K, T]) Values() []T {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -178,15 +192,22 @@ func (s *Store[K, T]) GetOrSet(key K, setFunc func() T) T {
 	s.mu.RLock()
 	v, ok := s.data[key]
 	s.mu.RUnlock()
+	if ok {
+		return v
+	}
 
+	// lock again for write
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// check again in case it was set between the 2 locks
+	v, ok = s.data[key]
 	if !ok {
-		s.mu.Lock()
 		v = setFunc()
 		if s.data == nil {
 			s.data = make(map[K]T)
 		}
 		s.data[key] = v
-		s.mu.Unlock()
 	}
 
 	return v

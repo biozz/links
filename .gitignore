@@ -5,3 +5,8 @@ tmp/
 .envrc
 __pycache__/
 .zed
+bin/
+dist/
+.local/
+.DS_Store
+!.tool-versions

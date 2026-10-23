@@ -2,7 +2,7 @@ package core
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"os"
@@ -13,8 +13,8 @@ import (
 	"sync"
 	"time"
 
-	validation "github.com/go-ozzo/ozzo-validation/v4"
-	"github.com/go-ozzo/ozzo-validation/v4/is"
+	validation "github.com/pocketbase/ozzo-validation/v4"
+	"github.com/pocketbase/ozzo-validation/v4/is"
 	"github.com/pocketbase/pocketbase/core/validators"
 	"github.com/pocketbase/pocketbase/tools/cron"
 	"github.com/pocketbase/pocketbase/tools/hook"
@@ -120,6 +120,10 @@ var (
 )
 
 type settings struct {
+	// SuperuserIPs defines an optional list of the superuser allowed
+	// individual IPs and subnets (in CIDR notation).
+	SuperuserIPs []string `form:"superuserIPs" json:"superuserIPs"`
+
 	SMTP         SMTPConfig         `form:"smtp" json:"smtp"`
 	Backups      BackupsConfig      `form:"backups" json:"backups"`
 	S3           S3Config           `form:"s3" json:"s3"`
@@ -143,6 +147,7 @@ func newDefaultSettings() *Settings {
 		isNew: true,
 		settings: settings{
 			Meta: MetaConfig{
+				AccentColor:   "#1055c9",
 				AppName:       "Acme",
 				AppURL:        "http://localhost:8090",
 				HideControls:  false,
@@ -232,7 +237,7 @@ func (s *Settings) String() string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	raw, _ := json.Marshal(s)
+	raw, _ := s.MarshalJSON()
 	return string(raw)
 }
 
@@ -252,7 +257,7 @@ func (s *Settings) DBExport(app App) (map[string]any, error) {
 	}
 	result["updated"] = now
 
-	encoded, err := json.Marshal(s.settings)
+	encoded, err := json.Marshal(s.settings, json.Deterministic(true))
 	if err != nil {
 		return nil, err
 	}
@@ -279,6 +284,7 @@ func (s *Settings) PostValidate(ctx context.Context, app App) error {
 	defer s.mu.RUnlock()
 
 	return validation.ValidateStructWithContext(ctx, s,
+		validation.Field(&s.SuperuserIPs, validation.Each(validation.Required, validation.By(validators.IPOrSubnet))),
 		validation.Field(&s.Meta),
 		validation.Field(&s.Logs),
 		validation.Field(&s.SMTP),
@@ -327,6 +333,8 @@ func (s *Settings) MarshalJSON() ([]byte, error) {
 	copy := s.settings
 	s.mu.RUnlock()
 
+	copy.SMTP.hidePassword = true
+
 	sensitiveFields := []*string{
 		&copy.SMTP.Password,
 		&copy.S3.Secret,
@@ -340,17 +348,23 @@ func (s *Settings) MarshalJSON() ([]byte, error) {
 		}
 	}
 
-	return json.Marshal(copy)
+	return json.Marshal(copy, json.Deterministic(true))
 }
 
 // -------------------------------------------------------------------
 
 type SMTPConfig struct {
+	// @todo temp workaround to avoid introducing breaking changes;
+	// consider refactoring and/or normalizing with the other Settings sensitive fields
+	//
+	// hidePassword specifies whether to hide the password field from the struct JSON serialization.
+	hidePassword bool
+
 	Enabled  bool   `form:"enabled" json:"enabled"`
 	Port     int    `form:"port" json:"port"`
 	Host     string `form:"host" json:"host"`
 	Username string `form:"username" json:"username"`
-	Password string `form:"password" json:"password,omitempty"`
+	Password string `form:"password" json:"password"`
 
 	// SMTP AUTH - PLAIN (default) or LOGIN
 	AuthMethod string `form:"authMethod" json:"authMethod"`
@@ -390,6 +404,22 @@ func (c SMTPConfig) Validate() error {
 		),
 		validation.Field(&c.LocalName, is.Host),
 	)
+}
+
+// MarshalJSON implements the [json.Marshaler] interface.
+func (c SMTPConfig) MarshalJSON() ([]byte, error) {
+	type alias SMTPConfig
+
+	if c.hidePassword {
+		v := struct {
+			alias
+			Password string `json:"password,omitempty"`
+		}{alias(c), ""}
+
+		return json.Marshal(v)
+	}
+
+	return json.Marshal(alias(c))
 }
 
 // -------------------------------------------------------------------
@@ -489,6 +519,11 @@ func checkCronExpression(value any) error {
 // -------------------------------------------------------------------
 
 type MetaConfig struct {
+	// @todo experimental
+	//
+	// AccentColor specify the UI "accent" color (HEX).
+	AccentColor string `form:"accentColor" json:"accentColor"`
+
 	AppName       string `form:"appName" json:"appName"`
 	AppURL        string `form:"appURL" json:"appURL"`
 	SenderName    string `form:"senderName" json:"senderName"`
@@ -499,7 +534,9 @@ type MetaConfig struct {
 // Validate makes MetaConfig validatable by implementing [validation.Validatable] interface.
 func (c MetaConfig) Validate() error {
 	return validation.ValidateStruct(&c,
+		validation.Field(&c.AccentColor, validation.Length(7, 7), is.HexColor),
 		validation.Field(&c.AppName, validation.Required, validation.Length(1, 255)),
+		// @todo when replacing the URL validator we may need a system migration to normalize values without protocol
 		validation.Field(&c.AppURL, validation.Required, is.URL),
 		validation.Field(&c.SenderName, validation.Required, validation.Length(1, 255)),
 		validation.Field(&c.SenderAddress, is.EmailFormat, validation.Required),
@@ -509,6 +546,12 @@ func (c MetaConfig) Validate() error {
 // -------------------------------------------------------------------
 
 type LogsConfig struct {
+	// MaxDataSize specifies the maximum allowed serialized log data
+	// size before it gets truncated (see [Log.DBExport]).
+	//
+	// If zero, fallbacks to ~16kb by default.
+	MaxDataSize int64 `form:"maxDataSize" json:"maxDataSize"`
+
 	MaxDays   int  `form:"maxDays" json:"maxDays"`
 	MinLevel  int  `form:"minLevel" json:"minLevel"`
 	LogIP     bool `form:"logIP" json:"logIP"`
@@ -518,7 +561,9 @@ type LogsConfig struct {
 // Validate makes LogsConfig validatable by implementing [validation.Validatable] interface.
 func (c LogsConfig) Validate() error {
 	return validation.ValidateStruct(&c,
-		validation.Field(&c.MaxDays, validation.Min(0)),
+		validation.Field(&c.MaxDataSize, validation.Min(0), validation.Max(maxSafeJSONInt)),
+		validation.Field(&c.MaxDays, validation.Min(0), validation.Max(maxSafeJSONInt)),
+		validation.Field(&c.MinLevel, validation.Max(maxSafeJSONInt)),
 	)
 }
 
@@ -536,18 +581,6 @@ type TrustedProxyConfig struct {
 	UseLeftmostIP bool `form:"useLeftmostIP" json:"useLeftmostIP"`
 }
 
-// MarshalJSON implements the [json.Marshaler] interface.
-func (c TrustedProxyConfig) MarshalJSON() ([]byte, error) {
-	type alias TrustedProxyConfig
-
-	// serialize as empty array
-	if c.Headers == nil {
-		c.Headers = []string{}
-	}
-
-	return json.Marshal(alias(c))
-}
-
 // Validate makes RateLimitRule validatable by implementing [validation.Validatable] interface.
 func (c TrustedProxyConfig) Validate() error {
 	return nil
@@ -556,8 +589,9 @@ func (c TrustedProxyConfig) Validate() error {
 // -------------------------------------------------------------------
 
 type RateLimitsConfig struct {
-	Rules   []RateLimitRule `form:"rules" json:"rules"`
-	Enabled bool            `form:"enabled" json:"enabled"`
+	Rules       []RateLimitRule `form:"rules" json:"rules"`
+	ExcludedIPs []string        `form:"excludedIPs" json:"excludedIPs"`
+	Enabled     bool            `form:"enabled" json:"enabled"`
 }
 
 // FindRateLimitRule returns the first matching rule based on the provided labels.
@@ -594,18 +628,6 @@ func (c *RateLimitsConfig) FindRateLimitRule(searchLabels []string, optOnlyAudie
 	return RateLimitRule{}, false
 }
 
-// MarshalJSON implements the [json.Marshaler] interface.
-func (c RateLimitsConfig) MarshalJSON() ([]byte, error) {
-	type alias RateLimitsConfig
-
-	// serialize as empty array
-	if c.Rules == nil {
-		c.Rules = []RateLimitRule{}
-	}
-
-	return json.Marshal(alias(c))
-}
-
 // Validate makes RateLimitsConfig validatable by implementing [validation.Validatable] interface.
 func (c RateLimitsConfig) Validate() error {
 	return validation.ValidateStruct(&c,
@@ -613,6 +635,10 @@ func (c RateLimitsConfig) Validate() error {
 			&c.Rules,
 			validation.When(c.Enabled, validation.Required),
 			validation.By(checkUniqueRuleLabel),
+		),
+		validation.Field(
+			&c.ExcludedIPs,
+			validation.Each(validation.Required, validation.By(validators.IPOrSubnet)),
 		),
 	)
 }

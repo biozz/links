@@ -1,7 +1,7 @@
 package core
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"slices"
@@ -24,6 +24,11 @@ const (
 	lowerModifier   string = "lower"
 	changedModifier string = "changed"
 )
+
+type ruleJoin struct {
+	collection *Collection
+	tableAlias string
+}
 
 // ensure that `search.FieldResolver` interface is implemented
 var _ search.FieldResolver = (*RecordFieldResolver)(nil)
@@ -51,8 +56,8 @@ type RecordFieldResolver struct {
 	joins             []*search.Join
 	allowHiddenFields bool
 	// ---
-	listRuleJoins       map[string]*Collection // tableAlias->collection
-	joinAliasSuffix     string                 // used for uniqueness in the flatten collection list rule join
+	listRuleJoins       []ruleJoin
+	joinAliasSuffix     string // used for uniqueness in the flatten collection list rule join
 	baseCollectionAlias string
 }
 
@@ -141,8 +146,8 @@ func (r *RecordFieldResolver) UpdateQuery(query *dbx.SelectQuery) error {
 
 	// note: for now the joins are not applied for multi-match conditions to avoid excessive checks
 	if len(r.listRuleJoins) > 0 {
-		for alias, c := range r.listRuleJoins {
-			err := r.updateQueryWithCollectionListRule(c, alias, query)
+		for _, join := range r.listRuleJoins {
+			err := r.updateQueryWithCollectionListRule(join.collection, join.tableAlias, query)
 			if err != nil {
 				return err
 			}
@@ -164,11 +169,28 @@ func (r *RecordFieldResolver) updateQueryWithCollectionListRule(c *Collection, t
 	cloneR.allowHiddenFields = true
 	cloneR.joinAliasSuffix = security.PseudorandomString(8)
 
-	expr, err := search.FilterData(*c.ListRule).BuildExpr(&cloneR)
+	// The extra "id='' || (\nRULE\n)" concatenated part on its own
+	// doesn't make much sense because all records are required to have an id,
+	// but it is necessary to properly resolve client-side filters when
+	// referencing missing relations (the "\n" is for leading and trailing comments).
+	//
+	// Consider the client-side filter: "a.name != '' || b.name != ''",
+	// where both "a" and "b" ref collections have non-empty ListRule.
+	// Without the empty check the query will always evaluate to FALSE
+	// when one of the "a" or "b" relation fields are empty,
+	// even if for example "a.name != ''" is true.
+	expr, err := search.FilterData("id='' || (\n" + *c.ListRule + "\n)").BuildExpr(&cloneR)
 	if err != nil {
-		return fmt.Errorf("to buld %q list rule join subquery filter expression: %w", c.Name, err)
+		return fmt.Errorf("failed to build %q ListRule join subquery filter expression: %w", c.Name, err)
 	}
 
+	// Bind the extra rule expression at the top query level for performance and security reasons
+	// (it is more strict and minimizes the risk of data disclosure from a side-channel attack).
+	//
+	// @todo Investigate with the refactoring if there is a way to group it
+	// together with the client-side constraint that invoked it and benchmark
+	// it with many (tag.name="1"||...) like statements to evaluate the impact of applying the check many times.
+	// If not feasible - document it as caveat and maybe add --dev log.
 	query.AndWhere(expr)
 
 	if len(cloneR.joins) > 0 {
@@ -219,6 +241,7 @@ func (r *RecordFieldResolver) updateQueryWithDeduplicateConstraint(query *dbx.Se
 	// }
 }
 
+//nolint:unused
 func preferGroupBy(info *dbx.QueryInfo, fullUnquotedGroupByCol string) bool {
 	if len(info.GroupBy) != 0 {
 		return false
@@ -326,12 +349,12 @@ func (r *RecordFieldResolver) resolveStaticRequestField(path ...string) (*search
 		// no further processing is needed...
 	default:
 		// non-plain value
-		// try casting to string (in case for exampe fmt.Stringer is implemented)
+		// try casting to string (in case for example fmt.Stringer is implemented)
 		val, castErr := cast.ToStringE(v)
 
 		// if that doesn't work, try encoding it
 		if castErr != nil {
-			encoded, jsonErr := json.Marshal(v)
+			encoded, jsonErr := json.Marshal(v, json.Deterministic(true))
 			if jsonErr == nil {
 				val = string(encoded)
 			}
@@ -393,10 +416,7 @@ func (r *RecordFieldResolver) registerJoin(tableName string, tableAlias string, 
 				return fmt.Errorf("%q fields can be accessed only when allowHiddenFields is enabled or by superusers", c.Name)
 			}
 
-			if r.listRuleJoins == nil {
-				r.listRuleJoins = map[string]*Collection{}
-			}
-			r.listRuleJoins[newJoin.TableAlias] = c
+			r.registerRuleJoin(c, newJoin.TableAlias)
 		}
 	}
 
@@ -411,6 +431,19 @@ func (r *RecordFieldResolver) registerJoin(tableName string, tableAlias string, 
 	// register new join
 	r.joins = append(r.joins, newJoin)
 	return nil
+}
+
+func (r *RecordFieldResolver) registerRuleJoin(collection *Collection, tableAlias string) {
+	// replace existing
+	for i, j := range r.listRuleJoins {
+		if j.tableAlias == tableAlias {
+			r.listRuleJoins[i].collection = collection
+			return
+		}
+	}
+
+	// register new
+	r.listRuleJoins = append(r.listRuleJoins, ruleJoin{collection, tableAlias})
 }
 
 type mapExtractor interface {

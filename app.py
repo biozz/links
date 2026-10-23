@@ -3,10 +3,10 @@
 # /// script
 # requires-python = ">=3.12"
 # dependencies = [
-#   "altair==5.3.0",
-#   "streamlit==1.37.1",
-#   "sqlalchemy==2.0.32",
-#   "watchdog==4.0.2",
+#   "altair==6.3.0",
+#   "streamlit==1.66.1",
+#   "sqlalchemy==2.1.6",
+#   "watchdog==6.0.0",
 # ]
 # ///
 import altair as alt

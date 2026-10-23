@@ -2,11 +2,13 @@ package core
 
 import (
 	"context"
+	"io/fs"
 	"net"
 	"net/http"
 	"time"
 
 	"github.com/pocketbase/pocketbase/tools/auth"
+	"github.com/pocketbase/pocketbase/tools/filesystem"
 	"github.com/pocketbase/pocketbase/tools/hook"
 	"github.com/pocketbase/pocketbase/tools/mailer"
 	"github.com/pocketbase/pocketbase/tools/router"
@@ -57,6 +59,9 @@ type baseCollectionEventData struct {
 	Collection *Collection
 }
 
+// @todo consider storing the original collection name and use that as a tag
+// to avoid the  ambiguity when the collection is being modified (#7613);
+// for new collection also maybe return empty tags?
 func (e *baseCollectionEventData) Tags() []string {
 	if e.Collection == nil {
 		return nil
@@ -125,6 +130,21 @@ type ServeEvent struct {
 	//
 	// Set it to nil if you want to skip the installer.
 	InstallerFunc func(app App, systemSuperuser *Record, baseURL string) error
+
+	// @todo experimental
+	//
+	// UIExtensions is a list with the superuser UI extensions.
+	UIExtensions []UIExtension
+}
+
+type UIExtension struct {
+	// Name is the name of the extension.
+	// It is also used as path segment for the registered public extension endpoint
+	// (e.g. /_/extensions/{name}/*)
+	Name string
+
+	// FS is the extension file system.
+	FS fs.FS
 }
 
 // -------------------------------------------------------------------
@@ -167,6 +187,24 @@ type MailerRecordEvent struct {
 	MailerEvent
 	baseRecordEventData
 	Meta map[string]any
+}
+
+// -------------------------------------------------------------------
+// Filesystem events data
+// -------------------------------------------------------------------
+
+type FilesystemNewWriterEvent struct {
+	hook.Event
+	*filesystem.NewWriterEvent
+
+	App App
+}
+
+type FilesystemDeleteEvent struct {
+	hook.Event
+	*filesystem.DeleteEvent
+
+	App App
 }
 
 // -------------------------------------------------------------------
@@ -429,8 +467,24 @@ type RealtimeConnectRequestEvent struct {
 
 	Client subscriptions.Client
 
-	// note: modifying it after the connect has no effect
+	// IdleTimeout specifies the max duration to wait for a new message
+	// before closing the connection.
+	//
+	// Modifying the value after the connection has been established has no effect.
+	//
+	// Defaults to 5 minutes.
 	IdleTimeout time.Duration
+
+	// MaxTimeout specifies the maximum duration a realtime connection
+	// can remain open (including even if there are ongoing messages).
+	//
+	// Once the specified duration expires, the current connection will
+	// be terminated, until a client reconnect is issued (if the client is still active).
+	//
+	// Modifying the value after the connection has been established has no effect.
+	//
+	// Defaults to 30 minutes.
+	MaxTimeout time.Duration
 }
 
 type RealtimeMessageEvent struct {

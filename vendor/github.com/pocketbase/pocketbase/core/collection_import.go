@@ -4,12 +4,13 @@ import (
 	"cmp"
 	"context"
 	"database/sql"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"slices"
 
-	validation "github.com/go-ozzo/ozzo-validation/v4"
+	validation "github.com/pocketbase/ozzo-validation/v4"
 	"github.com/spf13/cast"
 )
 
@@ -186,7 +187,11 @@ func (app *BaseApp) ImportCollections(toImport []map[string]any, deleteMissing b
 			)
 			if err := validator.run(); err != nil {
 				// serialize the validation error(s)
-				serializedErr, _ := json.MarshalIndent(err, "", "  ")
+				serializedErr, _ := json.Marshal(
+					err,
+					jsontext.WithIndentPrefix(""),
+					jsontext.WithIndent("  "),
+				)
 
 				return validation.Errors{"collections": validation.NewError(
 					"validation_collections_import_failure",

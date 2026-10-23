@@ -25,6 +25,7 @@ func healthCheck(e *core.RequestEvent) error {
 		Message: "API is healthy.",
 	}
 
+	// @todo evaluate whether it is worth removing the extra info from the health endpoint
 	if e.HasSuperuserAuth() {
 		resp.Data = make(map[string]any, 3)
 		resp.Data["canBackup"] = !e.App.Store().Has(core.StoreKeyActiveBackup)
@@ -36,7 +37,7 @@ func healthCheck(e *core.RequestEvent) error {
 		headersToCheck := append(
 			slices.Clone(e.App.Settings().TrustedProxy.Headers),
 			// common proxy headers
-			"CF-Connecting-IP", "Fly-Client-IP", "X‑Forwarded-For",
+			"CF-Connecting-IP", "Fly-Client-IP", "X-Forwarded-For",
 		)
 		for _, header := range headersToCheck {
 			if e.Request.Header.Get(header) != "" {
